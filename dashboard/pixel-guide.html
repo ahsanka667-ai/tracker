@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>How to Get Your Meta Pixel Credentials</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;
+  --text:#e6edf3;--text2:#8b949e;--text3:#6e7681;
+  --blue:#58a6ff;--blue-dim:#1f6feb;--green:#3fb950;--orange:#d29922;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:32px 20px;max-width:720px;margin:0 auto}
+h1{font-size:22px;font-weight:700;margin-bottom:6px}
+.subtitle{color:var(--text2);font-size:14px;margin-bottom:32px}
+.step-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:16px;display:flex;gap:16px}
+.step-num{width:32px;height:32px;border-radius:50%;background:var(--blue-dim);color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.step-body{flex:1}
+.step-title{font-size:15px;font-weight:600;margin-bottom:6px}
+.step-desc{font-size:13px;color:var(--text2);line-height:1.6}
+.step-desc a{color:var(--blue);text-decoration:none}
+.step-desc a:hover{text-decoration:underline}
+code{background:var(--bg3);border:1px solid var(--border);padding:2px 7px;border-radius:4px;font-family:monospace;font-size:12px;color:var(--orange)}
+.img-placeholder{background:var(--bg3);border:1px dashed var(--border);border-radius:8px;padding:16px;text-align:center;color:var(--text3);font-size:12px;margin-top:10px}
+.note{background:#58a6ff12;border:1px solid #58a6ff30;border-radius:8px;padding:12px 16px;font-size:13px;color:var(--blue);margin-top:24px;line-height:1.6}
+.back-btn{display:inline-flex;align-items:center;gap:6px;color:var(--text2);font-size:13px;text-decoration:none;margin-bottom:24px;padding:6px 0}
+.back-btn:hover{color:var(--text)}
+.tag{display:inline-block;background:var(--green);color:#000;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;margin-left:8px;vertical-align:middle}
+</style>
+</head>
+<body>
+
+<a href="index.html" class="back-btn">← Back to Dashboard</a>
+
+<h1>How to Get Your Meta Pixel Credentials</h1>
+<p class="subtitle">You need 2 things from Meta: your Pixel ID and a CAPI Access Token. Here's exactly where to find them.</p>
+
+<div class="step-card">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <div class="step-title">Open Meta Events Manager</div>
+    <div class="step-desc">
+      Go to <a href="https://business.facebook.com/events_manager" target="_blank">business.facebook.com/events_manager</a><br/><br/>
+      Make sure you're logged into the correct Facebook/Meta Business account that owns your ad account.
+    </div>
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <div class="step-title">Find Your Pixel ID</div>
+    <div class="step-desc">
+      In the left sidebar, click <strong>Data Sources</strong>.<br/><br/>
+      Click on your Pixel (it shows as a blue lightning bolt icon ⚡).<br/><br/>
+      Your <strong>Pixel ID</strong> is the 15-16 digit number shown at the top of the page, right below the pixel name.<br/><br/>
+      Example: <code>1234567890123456</code>
+      <div class="img-placeholder">📸 Pixel ID is shown under your pixel name at the top of the Overview tab</div>
+    </div>
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <div class="step-title">Generate a CAPI Access Token <span class="tag">IMPORTANT</span></div>
+    <div class="step-desc">
+      While still on your Pixel page, click the <strong>Settings</strong> tab (top navigation).<br/><br/>
+      Scroll down to find the section called <strong>"Conversions API"</strong>.<br/><br/>
+      Under <em>"Set up through partner integration"</em>, find the <strong>Access Token</strong> row.<br/><br/>
+      Click <strong>"Generate access token"</strong>.<br/><br/>
+      Copy the long token that appears — it starts with <code>EAA...</code> and is very long.<br/><br/>
+      ⚠️ <strong>Copy it immediately</strong> — it won't be shown again in full.
+      <div class="img-placeholder">📸 Settings tab → Conversions API section → Generate access token button</div>
+    </div>
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <div class="step-title">Don't have a Pixel yet?</div>
+    <div class="step-desc">
+      Go to <a href="https://business.facebook.com/events_manager" target="_blank">Events Manager</a> → click <strong>"Connect Data Sources"</strong> → choose <strong>Web</strong> → choose <strong>Meta Pixel</strong> → give it a name → click <strong>Create Pixel</strong>.<br/><br/>
+      You don't need to install any code on a website — TG Tracker fires events server-side via CAPI, so no website pixel code is needed.
+    </div>
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">5</div>
+  <div class="step-body">
+    <div class="step-title">Paste into TG Tracker</div>
+    <div class="step-desc">
+      Go back to the dashboard → <strong>Accounts</strong> tab → <strong>Add Bot</strong> or <strong>Add Personal</strong>.<br/><br/>
+      Paste:<br/>
+      • <strong>Meta Pixel ID</strong> → the 15-16 digit number<br/>
+      • <strong>CAPI Access Token</strong> → the long <code>EAA...</code> token<br/><br/>
+      Each account gets its own Pixel. If you have multiple bots running different campaigns, each can fire to a different Pixel.
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  💡 <strong>Testing your Pixel:</strong> After adding an account and creating a campaign, go back to Meta Events Manager → your Pixel → <strong>Test Events</strong> tab. Click a tracking link and watch the event appear in real time (usually within 1-2 minutes).
+</div>
+
+</body>
+</html>

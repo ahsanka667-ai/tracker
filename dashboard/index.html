@@ -1,0 +1,2275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<title>TG Tracker</title>
+<script src="https://telegram.org/js/telegram-web-app.js" async></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;--bg2:#111118;--bg3:#1a1a24;--bg4:#22222e;
+  --border:#2a2a38;--border2:#383848;
+  --text:#f0f0ff;--text2:#8888aa;--text3:#555570;
+  --blue:#4f8ef7;--blue-dim:#2d5fd4;--blue-bg:#1a2a5022;
+  --green:#3fd68c;--green-dim:#1f9e5a;--green-bg:#1a3d2a22;
+  --red:#f7504f;--red-bg:#3d1a1a22;
+  --orange:#f7a234;--orange-bg:#3d2a1022;
+  --purple:#a78bfa;--purple-bg:#2a1a4022;
+  --yellow:#f7d234;
+  --accent:#4f8ef7;
+  --radius:8px;--radius-lg:12px;--radius-xl:16px;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono','Fira Code','Courier New',monospace;
+  --sidebar:220px;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg)}
+body{font-family:var(--font);color:var(--text);font-size:13px;display:flex;flex-direction:column}
+
+.topbar{height:52px;display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--border);padding:0 20px;background:var(--bg2);
+  flex-shrink:0;z-index:100;gap:12px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:16px;
+  letter-spacing:-.3px;flex-shrink:0}
+.brand-mark{width:30px;height:30px;border-radius:8px;
+  background:linear-gradient(135deg,var(--blue-dim),var(--purple));
+  display:flex;align-items:center;justify-content:center}
+.brand-mark svg{color:#fff}
+.topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.ws-indicator{width:7px;height:7px;border-radius:50%;background:var(--text3);flex-shrink:0}
+.ws-indicator.live{background:var(--green);box-shadow:0 0 6px var(--green)}
+.notif-btn{width:32px;height:32px;border-radius:7px;border:1px solid var(--border);
+  background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;
+  justify-content:center;position:relative;transition:all .15s}
+.notif-btn:hover{background:var(--bg3);color:var(--text)}
+.notif-dot{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;
+  background:var(--red);display:none;border:1.5px solid var(--bg2)}
+.notif-dot.show{display:block}
+.user-chip{display:flex;align-items:center;gap:8px;padding:5px 10px 5px 5px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:20px;
+  cursor:pointer;transition:border-color .15s}
+.user-chip:hover{border-color:var(--border2)}
+.user-av{width:22px;height:22px;border-radius:50%;
+  background:linear-gradient(135deg,var(--blue-dim),var(--purple));
+  display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700}
+.user-name{font-size:12px;font-weight:500;color:var(--text)}
+
+.app-body{flex:1;display:flex;overflow:hidden}
+
+.sidebar{width:var(--sidebar);border-right:1px solid var(--border);
+  background:var(--bg2);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.sidebar-section{padding:8px 8px 4px}
+.sidebar-label{font-size:10px;font-weight:600;color:var(--text3);
+  text-transform:uppercase;letter-spacing:.8px;padding:4px 10px;margin-bottom:2px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:7px;
+  cursor:pointer;color:var(--text2);font-size:12px;font-weight:500;
+  transition:all .12s;position:relative;margin-bottom:1px;text-decoration:none;
+  border:1px solid transparent}
+.nav-item:hover{background:var(--bg3);color:var(--text);border-color:var(--border)}
+.nav-item.active{background:var(--bg3);color:var(--blue);border-color:var(--border)}
+.nav-item .nav-icon{font-size:15px;width:18px;text-align:center;flex-shrink:0}
+.nav-badge{margin-left:auto;background:var(--red);color:#fff;border-radius:10px;
+  font-size:10px;font-weight:600;padding:1px 5px;display:none}
+.nav-badge.show{display:inline}
+.sidebar-footer{margin-top:auto;padding:12px 8px;border-top:1px solid var(--border)}
+
+.main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.panel{display:none;flex:1;overflow-y:auto;padding:20px}
+.panel.active{display:flex;flex-direction:column;gap:18px}
+
+.page-header{display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.page-title{font-size:18px;font-weight:700;letter-spacing:-.3px}
+.page-sub{font-size:12px;color:var(--text2);margin-top:2px}
+.page-actions{display:flex;gap:8px;align-items:center}
+
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;flex-shrink:0}
+@media(max-width:700px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);
+  padding:16px 18px;position:relative;overflow:hidden;cursor:default}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--accent-color,var(--blue));opacity:.6}
+.stat-label{font-size:11px;color:var(--text2);text-transform:uppercase;
+  letter-spacing:.6px;font-weight:500;margin-bottom:10px}
+.stat-value{font-size:28px;font-weight:700;letter-spacing:-.8px;line-height:1}
+.stat-change{font-size:11px;margin-top:6px;display:flex;align-items:center;gap:4px}
+.stat-up{color:var(--green)}.stat-down{color:var(--red)}.stat-neu{color:var(--text3)}
+
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);
+  overflow:hidden}
+.card-header{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.card-title{font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px}
+.card-actions{display:flex;gap:6px}
+.card-body{padding:0}
+
+.tbl{width:100%;border-collapse:collapse;min-width:500px}
+.tbl-wrap{overflow-x:auto}
+.tbl thead th{text-align:left;padding:9px 14px;font-size:10px;font-weight:600;
+  color:var(--text3);text-transform:uppercase;letter-spacing:.6px;
+  background:var(--bg3);border-bottom:1px solid var(--border);white-space:nowrap;
+  cursor:pointer;user-select:none}
+.tbl thead th:hover{color:var(--text2)}
+.tbl tbody td{padding:11px 14px;border-bottom:1px solid var(--border);
+  font-size:12px;color:var(--text);vertical-align:middle}
+.tbl tbody tr:last-child td{border-bottom:none}
+.tbl tbody tr{transition:background .1s}
+.tbl tbody tr:hover td{background:rgba(79,142,247,.04)}
+.tbl-empty{text-align:center;padding:40px;color:var(--text2);font-size:13px}
+
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:7px;
+  font-size:12px;cursor:pointer;font-family:var(--font);font-weight:500;
+  white-space:nowrap;transition:all .15s;border:1px solid var(--border);
+  background:transparent;color:var(--text2)}
+.btn:hover{background:var(--bg3);color:var(--text);border-color:var(--border2)}
+.btn-primary{background:var(--blue-dim);border-color:var(--blue-dim);color:#fff}
+.btn-primary:hover{background:#2456c4;border-color:#2456c4}
+.btn-success{background:var(--green-dim);border-color:var(--green-dim);color:#fff}
+.btn-success:hover{background:#168248}
+.btn-danger{border-color:#f7504f44;color:var(--red)}
+.btn-danger:hover{background:var(--red-bg)}
+.btn-ghost{border-color:transparent;color:var(--text2)}
+.btn-ghost:hover{background:var(--bg3);border-color:var(--border)}
+.btn-sm{padding:4px 10px;font-size:11px;border-radius:6px}
+.btn-xs{padding:2px 7px;font-size:11px;border-radius:5px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:20px;
+  font-size:10px;font-weight:600;white-space:nowrap;letter-spacing:.2px}
+.badge-green{background:#1f4a3388;color:var(--green);border:1px solid #3fd68c33}
+.badge-blue{background:#1a2a5088;color:var(--blue);border:1px solid #4f8ef733}
+.badge-red{background:#3d1a1a88;color:var(--red);border:1px solid #f7504f33}
+.badge-orange{background:#3d2a1088;color:var(--orange);border:1px solid #f7a23433}
+.badge-purple{background:#2a1a4088;color:var(--purple);border:1px solid #a78bfa33}
+.badge-gray{background:#22222e;color:var(--text2);border:1px solid var(--border)}
+.dot{width:5px;height:5px;border-radius:50%;display:inline-block}
+.dot-green{background:var(--green)}.dot-red{background:var(--red)}.dot-gray{background:var(--text3)}
+
+.field{margin-bottom:14px}
+.field:last-child{margin-bottom:0}
+.label{display:block;font-size:11px;font-weight:500;color:var(--text2);
+  margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
+.hint{font-size:10px;color:var(--text3);margin-top:4px;line-height:1.5}
+input[type=text],input[type=tel],input[type=number],input[type=email],
+select,textarea{width:100%;background:var(--bg3);border:1px solid var(--border);
+  border-radius:7px;color:var(--text);padding:9px 12px;font-size:12px;
+  font-family:var(--font);outline:none;transition:border-color .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--blue-dim)}
+select option{background:var(--bg2)}
+.input-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:500;
+  display:flex;align-items:center;justify-content:center;padding:16px;
+  opacity:0;transition:opacity .18s;pointer-events:none;backdrop-filter:blur(4px)}
+.modal-backdrop.show{opacity:1;pointer-events:all}
+.modal{background:var(--bg2);border:1px solid var(--border2);
+  border-radius:var(--radius-xl);width:100%;max-width:480px;max-height:90vh;
+  overflow-y:auto;transform:translateY(12px);transition:transform .18s}
+.modal-backdrop.show .modal{transform:translateY(0)}
+.modal-lg{max-width:600px}
+.modal-header{display:flex;align-items:center;justify-content:space-between;
+  padding:16px 18px 14px;border-bottom:1px solid var(--border);
+  position:sticky;top:0;background:var(--bg2);z-index:1}
+.modal-title{font-size:14px;font-weight:600}
+.modal-close{width:26px;height:26px;border-radius:6px;border:none;
+  background:transparent;color:var(--text2);cursor:pointer;font-size:16px;
+  display:flex;align-items:center;justify-content:center}
+.modal-close:hover{background:var(--bg3);color:var(--text)}
+.modal-body{padding:18px}
+.modal-footer{padding:12px 18px;border-top:1px solid var(--border);
+  display:flex;gap:8px;justify-content:flex-end;
+  position:sticky;bottom:0;background:var(--bg2)}
+
+.alert{padding:10px 13px;border-radius:8px;font-size:12px;
+  margin-bottom:12px;display:flex;align-items:flex-start;gap:8px;line-height:1.5}
+.alert-info{background:#1a2a5022;border:1px solid #4f8ef733;color:var(--blue)}
+.alert-success{background:#1a3d2a22;border:1px solid #3fd68c33;color:var(--green)}
+.alert-error{background:#3d1a1a22;border:1px solid #f7504f33;color:var(--red)}
+.alert-warn{background:#3d2a1022;border:1px solid #f7a23433;color:var(--orange)}
+
+.steps{display:flex;align-items:center;margin-bottom:18px}
+.step{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text3)}
+.step.active{color:var(--text)}.step.done{color:var(--green)}
+.step-n{width:20px;height:20px;border-radius:50%;border:1.5px solid currentColor;
+  display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700}
+.step.done .step-n{background:var(--green);border-color:var(--green);color:#000}
+.step-line{flex:1;height:1px;background:var(--border);margin:0 8px}
+
+.spinner{width:14px;height:14px;border:2px solid var(--border);
+  border-top-color:var(--blue);border-radius:50%;
+  animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-row{display:flex;align-items:center;gap:8px;padding:20px;
+  color:var(--text2);font-size:12px}
+
+.copy-btn{padding:2px 7px;font-size:10px;background:var(--bg3);
+  border:1px solid var(--border);border-radius:5px;color:var(--text2);
+  cursor:pointer;font-family:var(--font);transition:all .1s;white-space:nowrap}
+.copy-btn:hover{color:var(--text)}
+.copy-btn.copied{color:var(--green);border-color:#3fd68c44}
+.url-cell{display:flex;align-items:center;gap:6px;max-width:200px}
+.url-mono{font-family:var(--mono);font-size:10px;color:var(--text2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+
+.notif-drawer{position:fixed;top:52px;right:12px;width:320px;max-height:400px;
+  background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);
+  z-index:200;display:none;flex-direction:column;
+  box-shadow:0 8px 32px rgba(0,0,0,.6)}
+.notif-drawer.open{display:flex}
+.notif-head{display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.notif-head-title{font-size:12px;font-weight:600}
+.notif-list{overflow-y:auto;flex:1}
+.notif-item{display:flex;gap:9px;padding:9px 14px;border-bottom:.5px solid var(--border);
+  cursor:pointer;transition:background .1s}
+.notif-item:hover{background:var(--bg3)}
+.notif-icon{width:30px;height:30px;border-radius:8px;display:flex;
+  align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.ni-conv{background:#1a3d2a44}.ni-click{background:#1a2a5044}
+.ni-msg{background:#2a1a4044}.ni-err{background:#3d1a1a44}
+.notif-body{flex:1;min-width:0}
+.notif-ttl{font-size:11px;font-weight:500;margin-bottom:2px}
+.notif-txt{font-size:10px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notif-ts{font-size:10px;color:var(--text3);margin-top:2px}
+.notif-empty{padding:20px;text-align:center;color:var(--text2);font-size:12px}
+
+.toast-wrap{position:fixed;bottom:20px;right:16px;z-index:999;
+  display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{background:var(--bg2);border:1px solid var(--border2);border-radius:10px;
+  padding:10px 14px;max-width:280px;display:flex;gap:9px;align-items:flex-start;
+  box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:all;
+  animation:slideUp .2s ease;opacity:1;transition:opacity .3s}
+@keyframes slideUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.toast-icon{font-size:15px;margin-top:1px}
+.toast-ttl{font-size:12px;font-weight:600;margin-bottom:2px}
+.toast-body{font-size:11px;color:var(--text2)}
+
+.acct-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media(max-width:520px){.acct-grid{grid-template-columns:1fr}}
+.acct-card{background:var(--bg2);border:1px solid var(--border);
+  border-radius:var(--radius-lg);padding:14px;transition:border-color .15s}
+.acct-card:hover{border-color:var(--border2)}
+.acct-head{display:flex;gap:9px;margin-bottom:10px;align-items:flex-start}
+.acct-icon{width:38px;height:38px;border-radius:9px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:17px}
+.ai-bot{background:#1a2a5033}.ai-personal{background:#1a3d2a33}.ai-channel{background:#2a1a4033}
+.acct-name{font-size:12px;font-weight:600;margin-bottom:2px}
+.acct-type{font-size:10px;color:var(--text2)}
+.acct-pixel{font-size:10px;color:var(--text3);font-family:var(--mono);
+  margin-top:4px;background:var(--bg3);padding:2px 7px;border-radius:4px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acct-foot{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+
+.funnel-visual{display:flex;flex-direction:column;gap:0;padding:12px 14px}
+.fv-step{display:flex;gap:10px;align-items:stretch}
+.fv-left{display:flex;flex-direction:column;align-items:center;width:32px;flex-shrink:0}
+.fv-circle{width:32px;height:32px;border-radius:50%;border:2px solid var(--border2);
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;
+  color:var(--text2);background:var(--bg3);flex-shrink:0;z-index:1}
+.fv-circle.has-data{border-color:var(--blue);background:var(--blue-dim);color:#fff}
+.fv-line{flex:1;width:2px;background:var(--border);margin:4px auto}
+.fv-body{flex:1;padding-bottom:14px}
+.fv-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.fv-name{font-size:12px;font-weight:500;margin-bottom:5px}
+.fv-stats{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text2)}
+.fv-count{font-size:18px;font-weight:700;color:var(--text)}
+.fv-bar{height:3px;background:var(--bg4);border-radius:2px;margin-top:6px;overflow:hidden}
+.fv-bar-fill{height:100%;border-radius:2px;background:var(--blue);transition:width .4s}
+.drop-pill{font-size:9px;font-weight:600;padding:1px 6px;border-radius:4px;
+  background:#3d1a1a44;color:var(--red);border:1px solid #f7504f22}
+
+.list-row{display:flex;align-items:center;gap:10px;padding:10px 14px;
+  border-bottom:1px solid var(--border)}
+.list-row:last-child{border-bottom:none}
+.list-av{width:30px;height:30px;border-radius:50%;
+  background:linear-gradient(135deg,var(--blue-dim),var(--purple));
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.token-code{font-family:var(--mono);font-size:11px;color:var(--orange);
+  background:var(--bg3);padding:2px 7px;border-radius:4px;
+  flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+.inbox-layout{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - 130px);
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.inbox-sidebar{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.inbox-search{padding:9px;border-bottom:1px solid var(--border);flex-shrink:0}
+.inbox-search input{width:100%;background:var(--bg3);border:1px solid var(--border);
+  border-radius:6px;color:var(--text);padding:7px 10px;font-size:11px;font-family:var(--font);outline:none}
+.inbox-search input:focus{border-color:var(--blue-dim)}
+.conv-list{overflow-y:auto;flex:1}
+.conv-item{display:flex;gap:8px;padding:9px 12px;cursor:pointer;
+  border-bottom:.5px solid var(--border);transition:background .1s}
+.conv-item:hover,.conv-item.active{background:var(--bg3)}
+.conv-item.unread .conv-name{font-weight:600;color:var(--text)}
+.conv-av{width:34px;height:34px;border-radius:50%;background:var(--bg4);
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:600;color:var(--text2);flex-shrink:0}
+.conv-info{flex:1;min-width:0}
+.conv-name{font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;color:var(--text2)}
+.conv-preview{font-size:10px;color:var(--text3);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.conv-meta{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0}
+.conv-time{font-size:9px;color:var(--text3)}
+.unread-dot{width:7px;height:7px;border-radius:50%;background:var(--blue)}
+.inbox-main{display:flex;flex-direction:column;overflow:hidden}
+.inbox-main-head{padding:10px 14px;border-bottom:1px solid var(--border);
+  flex-shrink:0;display:flex;align-items:center;gap:9px}
+.inbox-msgs{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:7px}
+.msg-bubble{max-width:70%;padding:7px 11px;border-radius:10px;font-size:11px;line-height:1.5}
+.msg-in{background:var(--bg3);border:1px solid var(--border);align-self:flex-start;border-bottom-left-radius:3px}
+.msg-out{background:var(--blue-dim);color:#fff;align-self:flex-end;border-bottom-right-radius:3px}
+.msg-time{font-size:9px;color:var(--text3);margin-top:3px}
+.inbox-empty{flex:1;display:flex;align-items:center;justify-content:center;
+  color:var(--text2);font-size:12px;flex-direction:column;gap:8px}
+
+.trigger-row{display:flex;align-items:center;gap:8px;padding:8px 10px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:7px;margin-bottom:5px}
+.trigger-icon{font-size:14px;width:20px;text-align:center;flex-shrink:0}
+.trigger-info{flex:1;font-size:11px}
+.trigger-type{font-weight:500;color:var(--text)}
+.trigger-event{color:var(--blue)}
+
+.empty{text-align:center;padding:40px 16px;color:var(--text2)}
+.empty-icon{font-size:36px;margin-bottom:12px;opacity:.25;display:block}
+.empty-title{font-size:14px;font-weight:500;margin-bottom:5px;color:var(--text)}
+.empty-sub{font-size:12px;margin-bottom:16px}
+
+.pbar{height:3px;background:var(--bg4);border-radius:2px;overflow:hidden}
+.pbar-fill{height:100%;border-radius:2px;transition:width .4s}
+.pbar-blue{background:var(--blue)}.pbar-green{background:var(--green)}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+.live-badge{display:inline-flex;align-items:center;gap:4px;
+  background:#1a3d2a44;border:1px solid #3fd68c33;border-radius:20px;
+  padding:2px 8px;font-size:10px;font-weight:600;color:var(--green)}
+.live-badge::before{content:'';width:5px;height:5px;border-radius:50%;
+  background:var(--green);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    </div>
+    TG Tracker
+  </div>
+  <div class="topbar-right">
+    <div class="ws-indicator" id="ws-dot" title="Real-time connection"></div>
+    <div class="live-badge" id="live-badge" style="display:none">LIVE</div>
+    <button class="notif-btn" onclick="toggleNotifs()" title="Notifications">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+      <div class="notif-dot" id="notif-dot"></div>
+    </button>
+    <div class="user-chip" onclick="loadAll()" title="Refresh">
+      <div class="user-av" id="nav-av">?</div>
+      <span class="user-name" id="nav-name">Loading…</span>
+    </div>
+    <button class="btn btn-ghost btn-icon" onclick="event.stopPropagation();logout()" title="Log out">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </button>
+  </div>
+</div>
+
+<div class="app-body">
+
+<nav class="sidebar">
+  <div class="sidebar-section">
+    <div class="sidebar-label">Tracking</div>
+    <div class="nav-item active" onclick="switchTab('overview')" data-tab="overview">
+      <span class="nav-icon">📊</span> Overview
+    </div>
+    <div class="nav-item" onclick="switchTab('campaigns')" data-tab="campaigns">
+      <span class="nav-icon">📣</span> Campaigns
+    </div>
+    <div class="nav-item" onclick="switchTab('conversions')" data-tab="conversions">
+      <span class="nav-icon">✅</span> Conversions
+    </div>
+    <div class="nav-item" onclick="switchTab('funnels')" data-tab="funnels">
+      <span class="nav-icon">🎯</span> Funnels
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Accounts</div>
+    <div class="nav-item" onclick="switchTab('accounts')" data-tab="accounts">
+      <span class="nav-icon">🔌</span> Accounts
+    </div>
+    <div class="nav-item" onclick="switchTab('inbox')" data-tab="inbox">
+      <span class="nav-icon">💬</span> Inbox
+      <span class="nav-badge" id="inbox-nav-badge"></span>
+    </div>
+  </div>
+  <div class="sidebar-section admin-only" style="display:none">
+    <div class="sidebar-label">Admin</div>
+    <div class="nav-item" onclick="switchTab('access')" data-tab="access">
+      <span class="nav-icon">👥</span> Users
+    </div>
+    <div class="nav-item" onclick="switchTab('tokens')" data-tab="tokens">
+      <span class="nav-icon">🎟</span> Tokens
+    </div>
+  </div>
+  <div class="sidebar-footer">
+    <div style="font-size:10px;color:var(--text3);text-align:center">TG Tracker v4</div>
+  </div>
+</nav>
+
+<div class="main">
+
+<div class="panel active" id="tab-overview">
+  <div class="page-header">
+    <div>
+      <div class="page-title">Overview</div>
+      <div class="page-sub">All-time performance across all campaigns</div>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-ghost btn-sm" onclick="loadAll()">↺ Refresh</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card" style="--accent-color:var(--blue)">
+      <div class="stat-label">Total Clicks</div>
+      <div class="stat-value" id="s-clicks">—</div>
+      <div class="stat-change stat-neu" id="s-clicks-sub"> </div>
+    </div>
+    <div class="stat-card" style="--accent-color:var(--green)">
+      <div class="stat-label">Conversions</div>
+      <div class="stat-value" id="s-convs">—</div>
+      <div class="stat-change stat-neu" id="s-convs-sub"> </div>
+    </div>
+    <div class="stat-card" style="--accent-color:var(--purple)">
+      <div class="stat-label">Conv. Rate</div>
+      <div class="stat-value" id="s-rate">—</div>
+      <div class="stat-change stat-neu">Click → Bot Start</div>
+    </div>
+    <div class="stat-card" style="--accent-color:var(--orange)">
+      <div class="stat-label">Live Accounts</div>
+      <div class="stat-value" id="s-accts">—</div>
+      <div class="stat-change stat-neu" id="s-accts-sub"> </div>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Top Campaigns</span>
+        <button class="btn btn-ghost btn-xs" onclick="switchTab('campaigns')">View all →</button>
+      </div>
+      <div class="card-body tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th>Campaign</th><th>Conv.</th><th>Rate</th></tr></thead>
+          <tbody id="top-camp-tbody"><tr><td colspan="3"><div class="loading-row"><div class="spinner"></div>Loading…</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Account Health</span></div>
+      <div class="card-body" id="acct-health"><div class="loading-row"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Recent Conversions</span>
+      <button class="btn btn-ghost btn-xs" onclick="switchTab('conversions')">View all →</button>
+    </div>
+    <div class="card-body tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Trigger</th><th>Event</th><th>Campaign</th><th>User</th><th>Time</th><th>Status</th></tr></thead>
+        <tbody id="recent-conv-tbody"><tr><td colspan="6"><div class="loading-row"><div class="spinner"></div>Loading…</div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="tab-campaigns">
+  <div class="page-header">
+    <div>
+      <div class="page-title">Campaigns <span id="camp-count" style="font-size:14px;color:var(--text2);font-weight:400"></span></div>
+      <div class="page-sub">Each campaign has a unique tracking URL + configurable conversion triggers</div>
+    </div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="openModal('modal-campaign')">+ New Campaign</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Name</th><th>Tracking URL</th><th>Triggers</th><th>Clicks</th><th>Conv.</th><th>Rate</th><th>Status</th><th></th></tr></thead>
+        <tbody id="camp-tbody"><tr><td colspan="8"><div class="loading-row"><div class="spinner"></div>Loading…</div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="tab-conversions">
+  <div class="page-header">
+    <div><div class="page-title">Conversions</div></div>
+    <div class="page-actions">
+      <select id="conv-filter" style="padding:6px 10px;font-size:11px;width:140px" onchange="loadConversions()">
+        <option value="">All Events</option>
+        <option>Lead</option><option>Contact</option>
+        <option>CompleteRegistration</option><option>Subscribe</option>
+        <option>Purchase</option><option>InitiateCheckout</option>
+      </select>
+      <select id="conv-trigger-filter" style="padding:6px 10px;font-size:11px;width:140px" onchange="loadConversions()">
+        <option value="">All Triggers</option>
+        <option value="bot_start">Bot /start</option>
+        <option value="first_message">First message</option>
+        <option value="keyword">Keyword</option>
+        <option value="channel_join">Channel join</option>
+        <option value="manual">Manual</option>
+        <option value="webhook">Webhook</option>
+      </select>
+      <button class="btn btn-success btn-sm" onclick="openModal('modal-manual-conv')">⚡ Manual Fire</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Trigger</th><th>Event</th><th>Campaign</th><th>User</th><th>Value</th><th>IP</th><th>Time</th><th>Status</th></tr></thead>
+        <tbody id="conv-tbody"><tr><td colspan="8"><div class="loading-row"><div class="spinner"></div>Loading…</div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="tab-funnels">
+  <div class="page-header">
+    <div><div class="page-title">Funnels <span id="funnel-count" style="font-size:14px;color:var(--text2);font-weight:400"></span></div>
+    <div class="page-sub">Track drop-off at every step of your conversion journey</div></div>
+    <div class="page-actions">
+      <select id="funnel-campaign-filter" style="padding:6px 10px;font-size:11px;width:170px" onchange="loadFunnels()">
+        <option value="">All campaigns</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="openAutoGenerateFunnel()">⚡ Auto-generate</button>
+      <button class="btn btn-primary" onclick="openModal('modal-funnel')">+ New Funnel</button>
+    </div>
+  </div>
+  <div id="funnels-list"><div class="loading-row"><div class="spinner"></div>Loading…</div></div>
+</div>
+
+<div class="panel" id="tab-accounts">
+  <div class="page-header">
+    <div><div class="page-title">Accounts <span id="acct-count" style="font-size:14px;color:var(--text2);font-weight:400"></span></div>
+    <div class="page-sub">Connect Telegram bots, personal accounts, and channels for tracking</div></div>
+    <div class="page-actions">
+      <button class="btn btn-ghost btn-sm" onclick="openModal('modal-bot')">🤖 Bot</button>
+      <button class="btn btn-ghost btn-sm" onclick="openModal('modal-channel')">📢 Channel</button>
+      <button class="btn btn-primary btn-sm" onclick="openModal('modal-personal')">👤 Personal</button>
+    </div>
+  </div>
+  <div class="acct-grid" id="accounts-grid"><div class="loading-row"><div class="spinner"></div>Loading…</div></div>
+</div>
+
+<div class="panel" id="tab-inbox">
+  <div class="page-header" style="margin-bottom:12px">
+    <div><div class="page-title">Inbox</div></div>
+    <div class="page-actions">
+      <button class="btn btn-ghost btn-sm" onclick="markAllRead()">Mark all read</button>
+    </div>
+  </div>
+  <div class="inbox-layout">
+    <div class="inbox-sidebar">
+      <div class="inbox-search"><input type="text" id="inbox-search" placeholder="Search…" oninput="filterConvs(this.value)"/></div>
+      <div class="conv-list" id="conv-list"><div class="loading-row"><div class="spinner"></div>Loading…</div></div>
+    </div>
+    <div class="inbox-main" id="inbox-main">
+      <div class="inbox-empty"><span style="font-size:28px;opacity:.2">💬</span><span>Select a conversation</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="tab-access">
+  <div class="page-header">
+    <div><div class="page-title">Dashboard Users</div></div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="openModal('modal-user')">+ Grant Access</button>
+    </div>
+  </div>
+  <div class="card"><div id="users-list"><div class="loading-row"><div class="spinner"></div>Loading…</div></div></div>
+</div>
+
+<div class="panel" id="tab-tokens">
+  <div class="page-header">
+    <div><div class="page-title">Access Tokens</div></div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="openModal('modal-token')">+ Generate Token</button>
+    </div>
+  </div>
+  <div class="alert alert-info">Tokens are reusable until expiry. Share one link with multiple people. Delete to revoke immediately.</div>
+  <div class="card"><div id="tokens-list"><div class="loading-row"><div class="spinner"></div>Loading…</div></div></div>
+</div>
+
+</div>
+</div>
+
+<div class="notif-drawer" id="notif-drawer">
+  <div class="notif-head">
+    <span class="notif-head-title">Notifications</span>
+    <button class="btn btn-ghost btn-xs" onclick="clearNotifs()">Clear all</button>
+  </div>
+  <div class="notif-list" id="notif-list"><div class="notif-empty">No notifications yet</div></div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<div class="modal-backdrop" id="modal-campaign" onclick="backdropClose(event,'modal-campaign')">
+  <div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">Create Campaign</div><button class="modal-close" onclick="closeModal('modal-campaign')">×</button></div>
+    <div class="modal-body">
+      <div class="field"><label class="label">Campaign Name *</label><input type="text" id="cn-name" placeholder="e.g. Eid Sale — Bot Leads"/></div>
+      <div class="field"><label class="label">Linked Account *</label><select id="cn-account"><option value="">Loading…</option></select><div class="hint">The bot or personal account that receives and tracks this campaign</div></div>
+      <div class="field"><label class="label">Target Telegram Resource *</label><input type="text" id="cn-target" placeholder="@yourbotusername or @channelname"/></div>
+      <div class="input-row">
+        <div class="field"><label class="label">Custom Slug</label><input type="text" id="cn-slug" placeholder="eid-sale (auto-generated)"/></div>
+        <div class="field"><label class="label">Default Event</label>
+          <select id="cn-event">
+            <option value="Lead">Lead</option><option value="CompleteRegistration">CompleteRegistration</option>
+            <option value="Subscribe">Subscribe</option><option value="Purchase">Purchase</option>
+            <option value="Contact">Contact</option><option value="ViewContent">ViewContent</option>
+            <option value="InitiateCheckout">InitiateCheckout</option>
+          </select>
+        </div>
+      </div>
+      <div class="field" style="margin-top:4px">
+        <label class="label">Quick Template <span style="text-transform:none;font-weight:400;color:var(--text3)">(optional)</span></label>
+        <div id="cn-templates" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
+        <div class="hint">Templates auto-configure conversion triggers after campaign creation</div>
+      </div>
+      <div id="cn-err" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-campaign')">Cancel</button>
+      <button class="btn btn-primary" id="cn-btn" onclick="createCampaign()">Create Campaign</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-camp-config" onclick="backdropClose(event,'modal-camp-config')">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">⚙️ <span id="cc-camp-name"></span></div>
+      <button class="modal-close" onclick="closeModal('modal-camp-config')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="cc-camp-id"/>
+      <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Conversion Triggers</div>
+      <div id="cc-triggers-list" style="margin-bottom:8px"></div>
+      <button class="btn btn-ghost btn-sm" onclick="showAddTrigger()">+ Add Trigger</button>
+      <div id="cc-add-trigger" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px">
+        <div class="input-row" style="margin-bottom:10px">
+          <div class="field" style="margin:0"><label class="label">Trigger</label>
+            <select id="ntr-type" onchange="onTriggerTypeChange()">
+              <option value="bot_start">🚀 Bot /start</option>
+              <option value="first_message">💬 First DM</option>
+              <option value="any_message">📨 Any message</option>
+              <option value="keyword">🔑 Keyword match</option>
+              <option value="channel_join">📢 Channel join</option>
+              <option value="manual">👤 Manual only</option>
+              <option value="webhook">🌐 Webhook</option>
+            </select>
+          </div>
+          <div class="field" style="margin:0"><label class="label">CAPI Event</label>
+            <input type="text" id="ntr-event" list="ntr-event-suggestions" value="Lead" placeholder="Lead"/>
+            <datalist id="ntr-event-suggestions">
+              <option value="Lead"></option><option value="Contact"></option>
+              <option value="CompleteRegistration"></option><option value="Purchase"></option>
+              <option value="Subscribe"></option><option value="InitiateCheckout"></option>
+              <option value="AddToCart"></option><option value="ViewContent"></option>
+              <option value="Schedule"></option>
+            </datalist>
+          </div>
+        </div>
+        <div id="ntr-keywords-row" style="display:none;margin-bottom:10px">
+          <label class="label">Keywords (comma-separated)</label>
+          <input type="text" id="ntr-keywords" placeholder="paid,bought,order,done,confirmed"/>
+          <div class="hint">Whole-word match, case-insensitive. A keyword can be a phrase, e.g. "not interested".</div>
+          <div style="display:flex;gap:14px;margin-top:8px;font-size:12px;color:var(--text2)">
+            <label style="display:flex;align-items:center;gap:5px"><input type="radio" name="ntr-match-mode" value="any" checked style="width:auto"/> Any word matches (OR)</label>
+            <label style="display:flex;align-items:center;gap:5px"><input type="radio" name="ntr-match-mode" value="all" style="width:auto"/> All words must match (AND)</label>
+          </div>
+        </div>
+        <div class="input-row" style="margin-bottom:10px">
+          <div class="field" style="margin:0"><label class="label">Value (Purchase)</label><input type="number" id="ntr-value" placeholder="49.99" step="0.01"/></div>
+          <div class="field" style="margin:0"><label class="label">Currency</label><input type="text" id="ntr-currency" value="USD" maxlength="3"/></div>
+        </div>
+        <div class="field" style="margin-bottom:10px"><label class="label">Content Name</label><input type="text" id="ntr-content-name" placeholder="Premium Plan"/></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="saveTrigger()">Save Trigger</button>
+          <button class="btn btn-sm" onclick="document.getElementById('cc-add-trigger').style.display='none'">Cancel</button>
+        </div>
+      </div>
+      <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px">Webhook URLs</div>
+      <div class="alert alert-info" style="margin-bottom:10px;font-size:11px">POST to these URLs from ClickFunnels, payment gateways, or any system to fire conversions.</div>
+      <div id="cc-webhooks-list" style="margin-bottom:8px"></div>
+      <button class="btn btn-ghost btn-sm" onclick="createWebhook()">+ Generate Webhook URL</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="quickGenerateFunnelFromConfig()" title="Build/update a funnel from this campaign's triggers">⚡ Build Funnel</button>
+      <button class="btn btn-primary" onclick="closeModal('modal-camp-config')">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-bot" onclick="backdropClose(event,'modal-bot')">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">🤖 Connect Telegram Bot</div><button class="modal-close" onclick="closeModal('modal-bot')">×</button></div>
+    <div class="modal-body">
+      <div class="field"><label class="label">Label</label><input type="text" id="ab-label" placeholder="e.g. Main Sales Bot"/></div>
+      <div class="field"><label class="label">Bot Token *</label><input type="text" id="ab-token" placeholder="7123456789:AAFxxxxxxxx"/><div class="hint">From @BotFather → /mybots → API Token</div></div>
+      <div class="input-row">
+        <div class="field"><label class="label">Meta Pixel ID</label><input type="text" id="ab-pixel" placeholder="1234567890123456"/></div>
+        <div class="field"><label class="label">CAPI Access Token</label><input type="text" id="ab-capi" placeholder="EAAxxxxxxxx…"/></div>
+      </div>
+      <div class="field"><label class="label">Proxy (optional)</label><input type="text" id="ab-proxy" placeholder="socks5://user:pass@host:1080"/></div>
+      <div id="ab-err" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-bot')">Cancel</button>
+      <button class="btn btn-primary" id="ab-btn" onclick="addBot()">Connect</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-edit-account" onclick="backdropClose(event,'modal-edit-account')">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Edit Account</div><button class="modal-close" onclick="closeModal('modal-edit-account')">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="ea-id"/>
+      <div class="field"><label class="label">Label</label><input type="text" id="ea-label"/></div>
+      <div class="input-row">
+        <div class="field"><label class="label">Meta Pixel ID</label><input type="text" id="ea-pixel"/></div>
+        <div class="field"><label class="label">New CAPI Token</label><input type="text" id="ea-capi" placeholder="Leave blank to keep"/></div>
+      </div>
+      <div class="field"><label class="label">Proxy</label><input type="text" id="ea-proxy" placeholder="Leave blank to keep"/></div>
+      <div id="ea-err" class="alert alert-error" style="display:none"></div>
+      <div id="ea-ok" class="alert alert-success" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-edit-account')">Close</button>
+      <button class="btn btn-success btn-sm" id="ea-test-btn" onclick="testPixel()">🧪 Test Pixel</button>
+      <button class="btn btn-primary" id="ea-save-btn" onclick="saveAccount()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-personal" onclick="backdropClose(event,'modal-personal')">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">👤 Connect Personal Account</div><button class="modal-close" onclick="closeModal('modal-personal')">×</button></div>
+    <div class="modal-body">
+      <div class="steps">
+        <div class="step active" id="ps-1"><div class="step-n">1</div><span>Phone</span></div>
+        <div class="step-line"></div>
+        <div class="step" id="ps-2"><div class="step-n">2</div><span>Verify</span></div>
+        <div class="step-line"></div>
+        <div class="step" id="ps-3"><div class="step-n">3</div><span>Done</span></div>
+      </div>
+      <div id="pp-1">
+        <div class="alert alert-warn" style="font-size:11px;margin-bottom:12px">⚠️ 2FA (Two-Step Verification) must be disabled before connecting.</div>
+        <div class="field"><label class="label">Phone Number *</label><input type="tel" id="pp-phone" placeholder="+8801XXXXXXXXX"/></div>
+        <div class="input-row">
+          <div class="field"><label class="label">Pixel ID</label><input type="text" id="pp-pixel"/></div>
+          <div class="field"><label class="label">CAPI Token</label><input type="text" id="pp-capi"/></div>
+        </div>
+        <div class="field"><label class="label">Proxy (optional)</label><input type="text" id="pp-proxy"/></div>
+      </div>
+      <div id="pp-2" style="display:none">
+        <div class="alert alert-info" style="font-size:11px;margin-bottom:12px">📱 Telegram sent a code to your Telegram app. Enter it below.</div>
+        <div class="field"><label class="label">Verification Code *</label>
+          <input type="text" id="pp-code" placeholder="1 2 3 4 5" maxlength="10"
+            style="font-family:var(--mono);letter-spacing:6px;font-size:22px;text-align:center"/>
+        </div>
+      </div>
+      <div id="pp-3" style="display:none;text-align:center;padding:20px 0">
+        <div style="font-size:40px;margin-bottom:12px">✅</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:5px">Account Connected!</div>
+        <div style="font-size:12px;color:var(--text2)">Your personal account is now live and tracking.</div>
+      </div>
+      <div id="pp-err" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer" id="pp-footer">
+      <button class="btn" onclick="closeModal('modal-personal')">Cancel</button>
+      <button class="btn btn-primary" id="pp-btn" onclick="personalNext()">Send Code →</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-channel" onclick="backdropClose(event,'modal-channel')">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">📢 Add Channel / Group</div><button class="modal-close" onclick="closeModal('modal-channel')">×</button></div>
+    <div class="modal-body">
+      <div class="alert alert-info" style="font-size:11px;margin-bottom:12px">Track when users join a channel or group from your ad. Worker auto-approves join requests and fires CAPI.</div>
+      <div class="field"><label class="label">Label</label><input type="text" id="ch-label" placeholder="e.g. VIP Channel"/></div>
+      <div class="field"><label class="label">Channel @username or Invite Link *</label><input type="text" id="ch-identifier" placeholder="@mychannelname or https://t.me/+xxxxx"/></div>
+      <div class="field"><label class="label">Monitor via Account (Bot recommended)</label>
+        <select id="ch-monitor-account"><option value="">None (direct join request tracking)</option></select>
+        <div class="hint">A bot or personal account that's already a member/admin of the channel. A bot admin is the recommended, safer option — it won't risk your personal account getting flagged for automation, and it's the standard way Telegram expects channel automation to work.</div>
+      </div>
+      <div class="input-row">
+        <div class="field"><label class="label">Meta Pixel ID</label><input type="text" id="ch-pixel"/></div>
+        <div class="field"><label class="label">CAPI Token</label><input type="text" id="ch-capi"/></div>
+      </div>
+      <div id="ch-err" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-channel')">Cancel</button>
+      <button class="btn btn-primary" id="ch-btn" onclick="addChannel()">Add Channel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-manual-conv" onclick="backdropClose(event,'modal-manual-conv')">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">⚡ Manual Conversion Fire</div><button class="modal-close" onclick="closeModal('modal-manual-conv')">×</button></div>
+    <div class="modal-body">
+      <div class="alert alert-info" style="font-size:11px;margin-bottom:12px">Fire a CAPI event manually — for phone/cash sales, offline deals, or anything automated tracking can't catch.</div>
+      <div class="field"><label class="label">Campaign *</label><select id="mc-campaign"><option value="">Select campaign…</option></select></div>
+      <div class="input-row">
+        <div class="field"><label class="label">Telegram ID or @username</label><input type="text" id="mc-user" placeholder="123456789 or @username"/></div>
+        <div class="field"><label class="label">Phone (optional)</label><input type="tel" id="mc-phone" placeholder="+8801XXXXXXXXX"/></div>
+      </div>
+      <div class="field"><label class="label">Event *</label>
+        <select id="mc-event">
+          <option value="Lead">Lead</option><option value="Contact">Contact</option>
+          <option value="CompleteRegistration">CompleteRegistration</option>
+          <option value="Purchase">Purchase</option><option value="Subscribe">Subscribe</option>
+          <option value="InitiateCheckout">InitiateCheckout</option>
+          <option value="Schedule">Schedule</option>
+        </select>
+      </div>
+      <div class="input-row">
+        <div class="field"><label class="label">Value</label><input type="number" id="mc-value" placeholder="49.99" step="0.01"/></div>
+        <div class="field"><label class="label">Currency</label><input type="text" id="mc-currency" value="USD" maxlength="3"/></div>
+      </div>
+      <div class="input-row">
+        <div class="field"><label class="label">Content Name</label><input type="text" id="mc-content-name" placeholder="Premium Plan"/></div>
+        <div class="field"><label class="label">Order ID</label><input type="text" id="mc-order-id" placeholder="ORD-12345"/></div>
+      </div>
+      <div id="mc-result" class="alert" style="display:none"></div>
+      <div id="mc-err" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-manual-conv')">Close</button>
+      <button class="btn btn-success" id="mc-btn" onclick="fireManualConversion()">🔥 Fire Now</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-funnel" onclick="backdropClose(event,'modal-funnel')">
+  <div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">Create Funnel</div><button class="modal-close" onclick="closeModal('modal-funnel')">×</button></div>
+    <div class="modal-body">
+      <div class="field"><label class="label">Funnel Name *</label><input type="text" id="fn-name" placeholder="e.g. Eid Promo Full Flow"/></div>
+      <div class="field"><label class="label">Campaign *</label><select id="fn-campaign" onchange="onFunnelCampaignChange()"><option value="">Select campaign…</option></select>
+        <div class="hint">A funnel tracks the journey of one campaign's traffic — pick which campaign this funnel measures.</div>
+      </div>
+      <div id="fn-no-triggers" class="alert alert-warn" style="display:none">
+        This campaign has no conversion triggers configured yet. Go to Campaigns → ⚙️ Configure to add at least 2 triggers first (e.g. Bot /start → Lead, then a Keyword trigger → Purchase).
+      </div>
+      <div id="fn-trigger-picker" style="display:none">
+        <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">
+          Funnel Steps <span style="font-weight:400;text-transform:none;color:var(--text3)">— pick triggers in the order they should happen</span>
+        </div>
+        <div id="fn-available-triggers" style="margin-bottom:12px"></div>
+        <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">
+          Selected Steps (in order) <span id="fn-selected-count" style="font-weight:400;text-transform:none"></span>
+        </div>
+        <div id="fn-selected-steps"><div style="font-size:12px;color:var(--text3);padding:8px 0">No steps selected yet — click triggers above to add them in order.</div></div>
+      </div>
+      <div id="fn-err" class="alert alert-error" style="display:none;margin-top:10px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-funnel')">Cancel</button>
+      <button class="btn btn-primary" id="fn-btn" onclick="createFunnel()">Create Funnel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-auto-funnel" onclick="backdropClose(event,'modal-auto-funnel')">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">⚡ Auto-generate Funnel</div><button class="modal-close" onclick="closeModal('modal-auto-funnel')">×</button></div>
+    <div class="modal-body">
+      <div class="alert alert-info" style="font-size:12px">
+        Builds a funnel automatically from a campaign's existing triggers, in the order they're configured. Needs at least 2 active triggers on the campaign first. Re-running this updates the auto-generated funnel to match any trigger changes — your own hand-built funnels are never touched.
+      </div>
+      <div class="field"><label class="label">Campaign *</label><select id="af-campaign"><option value="">Select campaign…</option></select></div>
+      <div id="af-err" class="alert alert-error" style="display:none"></div>
+      <div id="af-ok" class="alert alert-success" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-auto-funnel')">Close</button>
+      <button class="btn btn-primary" id="af-btn" onclick="runAutoGenerateFunnel()">Generate</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-user" onclick="backdropClose(event,'modal-user')">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Grant Dashboard Access</div><button class="modal-close" onclick="closeModal('modal-user')">×</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:6px;margin-bottom:12px">
+        <button type="button" class="btn btn-xs" id="gu-tab-tg" onclick="setGuMode('telegram')" style="flex:1">Telegram user</button>
+        <button type="button" class="btn btn-xs" id="gu-tab-local" onclick="setGuMode('local')" style="flex:1">Username/password (no Telegram)</button>
+      </div>
+
+      <div id="gu-mode-telegram">
+        <div class="alert alert-info" style="font-size:11px;margin-bottom:12px">Ask the user to message @userinfobot to get their numeric Telegram ID.</div>
+        <div class="field"><label class="label">Telegram ID *</label><input type="text" id="gu-id" placeholder="123456789" style="font-family:var(--mono)"/></div>
+        <div class="input-row">
+          <div class="field"><label class="label">First Name *</label><input type="text" id="gu-name" placeholder="John"/></div>
+          <div class="field"><label class="label">Username</label><input type="text" id="gu-username" placeholder="@username"/></div>
+        </div>
+      </div>
+
+      <div id="gu-mode-local" style="display:none">
+        <div class="alert alert-info" style="font-size:11px;margin-bottom:12px">Creates a login that doesn't touch Telegram at all — good for teammates or clients without a Telegram account.</div>
+        <div class="field"><label class="label">Display Name</label><input type="text" id="gul-name" placeholder="John"/></div>
+        <div class="input-row">
+          <div class="field"><label class="label">Username *</label><input type="text" id="gul-username" placeholder="john"/></div>
+          <div class="field"><label class="label">Password *</label><input type="password" id="gul-password" placeholder="min 8 characters"/></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);margin-top:4px">
+          <input type="checkbox" id="gul-admin" style="width:auto"/> Grant admin access
+        </label>
+      </div>
+
+      <div id="gu-err" class="alert alert-error" style="display:none;margin-top:10px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-user')">Cancel</button>
+      <button class="btn btn-primary" id="gu-btn" onclick="grantAccess()">Grant Access</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal-token" onclick="backdropClose(event,'modal-token')">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Generate Access Token</div><button class="modal-close" onclick="closeModal('modal-token')">×</button></div>
+    <div class="modal-body">
+      <div class="field"><label class="label">Expires In</label>
+        <select id="tok-expires">
+          <option value="0">Never expires</option>
+          <option value="24">24 hours</option>
+          <option value="72" selected>72 hours</option>
+          <option value="168">7 days</option>
+          <option value="720">30 days</option>
+        </select>
+        <div class="hint">Tokens are reusable — multiple people can use the same link until expiry.</div>
+      </div>
+      <div id="tok-result" style="display:none">
+        <div class="alert alert-success" style="margin-bottom:10px">✅ Token created! Share this link:</div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div id="tok-link" style="font-family:var(--mono);font-size:10px;color:var(--orange);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+            <button class="copy-btn" onclick="copyText(document.getElementById('tok-link').textContent,this)">Copy</button>
+          </div>
+        </div>
+      </div>
+      <div id="tok-err" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-token')">Close</button>
+      <button class="btn btn-primary" id="tok-btn" onclick="generateToken()">Generate</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+let me = { telegram_id: 0, first_name: '', is_admin: false };
+let sessionToken = null;
+let accountsCache = [];
+let botUsername = 'YourTrackerBot';
+let ws = null;
+let notifications = [];
+let allMessages = [];
+let activeConvId = null;
+let configCampId = null;
+let funnelStepCount = 0;
+let tg = null;
+let _campsCache = [];
+
+function startApp() {
+  tg = window.Telegram?.WebApp || null;
+  if (tg) { try { tg.ready(); tg.expand(); } catch(e) {} }
+
+  const mc = document.getElementById('modal-channel');
+  if (mc) {
+    mc.addEventListener('transitionend', function() {
+      if (!this.classList.contains('show')) return;
+      const sel = document.getElementById('ch-monitor-account');
+      if (!sel) return;
+      // Both PERSONAL and BOT accounts can monitor a channel/group — a bot
+      // just needs to be added to the chat as admin. Bots are the
+      // recommended option (see hint text), so list them first.
+      const monitors = accountsCache
+        .filter(a => (a.account_type === 'BOT' || a.account_type === 'PERSONAL') && a.is_active)
+        .sort((a,b) => (a.account_type==='BOT'?0:1) - (b.account_type==='BOT'?0:1));
+      sel.innerHTML = '<option value="">None</option>' +
+        monitors.map(a => `<option value="${a.id}">${esc(a.label||a.identifier_hint)} (${a.account_type})</option>`).join('');
+    });
+  }
+  initAuth();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startApp);
+} else {
+  startApp();
+}
+
+async function initAuth() {
+  const initData = tg?.initData || '';
+  const isInsideTelegram = initData.length > 10;
+
+  if (isInsideTelegram) {
+    let r, data;
+    try {
+      r = await fetch(API + '/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData }),
+      });
+      data = await r.json();
+    } catch(e) {
+      showNoAccess('Cannot reach the server. Check your connection.');
+      return;
+    }
+    if (data.ok && r.status === 200) {
+      me = { telegram_id: data.telegram_id, first_name: data.first_name,
+             username: data.username, is_admin: data.is_admin };
+      sessionToken = data.session_token;
+      sessionStorage.setItem('session_token', sessionToken);
+      finishInit(); return;
+    }
+    const detail = data?.detail || '';
+    showNoAccess(detail === 'no_access'
+      ? "You don't have access yet.\n\nAsk the administrator for an invite link."
+      : 'Authentication failed: ' + detail);
+    return;
+  }
+
+  // Browser mode: try an existing session token first (sessionStorage —
+  // cleared when the tab closes, unlike the old localStorage ID box that
+  // persisted forever and could be read/copied by anyone with device access)
+  const storedToken = sessionStorage.getItem('session_token');
+  if (storedToken) {
+    sessionToken = storedToken;
+    try {
+      const data = await api('/me');
+      me = { telegram_id: data.telegram_id, first_name: data.first_name,
+             username: data.username, is_admin: data.is_admin };
+      finishInit();
+      return;
+    } catch(e) {
+      sessionToken = null;
+      sessionStorage.removeItem('session_token');
+    }
+  }
+  await showLoginScreen();
+}
+
+async function showLoginScreen() {
+  // Username/password is the default, always-available login path — no
+  // Telegram bot, widget, or domain setup required. Telegram login is
+  // offered as an *optional* extra only if a bot is actually configured
+  // (i.e. GET /api/bot-info returns a username).
+  if (!localStorage.getItem('bot_username')) {
+    try {
+      const r = await fetch(API + '/api/bot-info');
+      const d = await r.json();
+      if (d.username) { botUsername = d.username; localStorage.setItem('bot_username', botUsername); }
+    } catch(e) {}
+  } else {
+    botUsername = localStorage.getItem('bot_username');
+  }
+
+  let overlay = document.getElementById('login-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.id='login-overlay'; document.body.appendChild(overlay); }
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px';
+  overlay.innerHTML = `
+    <div style="width:100%;max-width:340px;text-align:center">
+      <div style="width:52px;height:52px;border-radius:13px;background:linear-gradient(135deg,var(--blue-dim),var(--purple));display:flex;align-items:center;justify-content:center;margin:0 auto 14px">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </div>
+      <div style="font-size:20px;font-weight:700;margin-bottom:6px">TG Tracker</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:20px">Log in to continue</div>
+      <form id="password-login-form" style="text-align:left;margin-bottom:14px" onsubmit="return false;">
+        <input id="login-username" type="text" autocomplete="username" placeholder="Username"
+               style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:14px">
+        <input id="login-password" type="password" autocomplete="current-password" placeholder="Password"
+               style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:14px">
+        <button id="login-submit-btn" onclick="handlePasswordLogin()"
+                style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--blue,#3390ec);color:#fff;font-size:14px;font-weight:600;cursor:pointer">
+          Log in
+        </button>
+      </form>
+      <div id="login-err" style="display:none;margin-top:2px;margin-bottom:10px;padding:9px 12px;background:var(--red-bg);border:1px solid #f7504f33;border-radius:7px;font-size:12px;color:var(--red)"></div>
+      <div id="tg-login-widget-wrap" style="display:none">
+        <div style="font-size:11px;color:var(--text3);margin:14px 0 10px">or</div>
+        <div id="tg-login-widget-container" style="display:flex;justify-content:center;margin-bottom:8px"></div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:16px">Don't have access? Contact the admin.</div>
+    </div>`;
+
+  document.getElementById('login-password')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') handlePasswordLogin();
+  });
+
+  // Telegram's official login widget is only rendered if a bot is
+  // actually configured — otherwise the whole product works fine with
+  // just username/password and this section stays hidden.
+  if (botUsername) {
+    document.getElementById('tg-login-widget-wrap').style.display = '';
+    window.onTelegramAuth = handleTelegramLoginWidget;
+    const script = document.createElement('script');
+    script.src = 'https://telegram.org/js/telegram-widget.js?22';
+    script.setAttribute('data-telegram-login', botUsername);
+    script.setAttribute('data-size', 'large');
+    script.setAttribute('data-radius', '8');
+    script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+    script.setAttribute('data-request-access', 'write');
+    document.getElementById('tg-login-widget-container').appendChild(script);
+  }
+}
+
+async function handlePasswordLogin() {
+  const errEl = document.getElementById('login-err');
+  if (errEl) errEl.style.display = 'none';
+  const username = document.getElementById('login-username')?.value.trim();
+  const password = document.getElementById('login-password')?.value || '';
+  if (!username || !password) {
+    if (errEl) { errEl.textContent = 'Enter a username and password.'; errEl.style.display = 'block'; }
+    return;
+  }
+  const btn = document.getElementById('login-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Logging in…'; }
+  try {
+    const r = await fetch(API + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await r.json();
+    if (data.ok && r.status === 200) {
+      me = { telegram_id: data.telegram_id, first_name: data.first_name,
+             username: data.username, login_username: data.login_username, is_admin: data.is_admin };
+      sessionToken = data.session_token;
+      sessionStorage.setItem('session_token', sessionToken);
+      finishInit();
+      return;
+    }
+    if (errEl) { errEl.textContent = 'Incorrect username or password.'; errEl.style.display = 'block'; }
+  } catch(e) {
+    if (errEl) { errEl.textContent = 'Could not reach server: ' + e.message; errEl.style.display = 'block'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Log in'; }
+  }
+}
+
+async function handleTelegramLoginWidget(user) {
+  const errEl = document.getElementById('login-err');
+  if (errEl) errEl.style.display = 'none';
+  try {
+    const r = await fetch(API + '/api/auth/login-widget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(user),
+    });
+    const data = await r.json();
+    if (data.ok && r.status === 200) {
+      me = { telegram_id: data.telegram_id, first_name: data.first_name,
+             username: data.username, is_admin: data.is_admin };
+      sessionToken = data.session_token;
+      sessionStorage.setItem('session_token', sessionToken);
+      finishInit();
+      return;
+    }
+    const detail = data?.detail || '';
+    showNoAccess(detail === 'no_access'
+      ? "You don't have access yet.\n\nAsk the administrator for an invite link."
+      : 'Login failed: ' + detail);
+  } catch(e) {
+    if (errEl) { errEl.textContent = 'Could not reach server: ' + e.message; errEl.style.display = 'block'; }
+  }
+}
+
+function showNoAccess(msg) {
+  let overlay = document.getElementById('login-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.id='login-overlay'; document.body.appendChild(overlay); }
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px';
+  overlay.innerHTML = `
+    <div style="text-align:center;max-width:320px">
+      <div style="font-size:48px;margin-bottom:18px">🔐</div>
+      <div style="font-size:18px;font-weight:700;margin-bottom:10px">Access Required</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.7;margin-bottom:20px;white-space:pre-line">${msg||"You don't have access yet."}</div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;text-align:left;margin-bottom:14px">
+        <div class="label" style="margin-bottom:8px">How to get access</div>
+        <div style="font-size:12px;color:var(--text);line-height:2">1️⃣ Contact the admin<br>2️⃣ Ask for an invite link<br>3️⃣ Click the link in Telegram ✅</div>
+      </div>
+    </div>`;
+}
+
+function finishInit() {
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.remove();
+  document.getElementById('nav-name').textContent = me.first_name;
+  document.getElementById('nav-av').textContent = (me.first_name[0]||'?').toUpperCase();
+  if (me.is_admin) document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+  if (tg?.initDataUnsafe?.bot?.username) {
+    botUsername = tg.initDataUnsafe.bot.username;
+    localStorage.setItem('bot_username', botUsername);
+  } else if (localStorage.getItem('bot_username')) {
+    botUsername = localStorage.getItem('bot_username');
+  }
+  loadTemplates();
+  connectWS();
+  loadAll();
+  setInterval(() => {
+    loadSummary();
+    loadConversions();
+    loadUnreadCount();
+  }, 60000);
+}
+
+async function logout() {
+  try { await fetch(API + '/api/auth/logout', { method:'POST', headers:{'Authorization':'Bearer '+sessionToken} }); } catch(e) {}
+  sessionToken = null;
+  sessionStorage.removeItem('session_token');
+  location.reload();
+}
+
+async function api(path, method='GET', body=null) {
+  if (!sessionToken) throw new Error('Not authenticated');
+  const opts = { method, headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + sessionToken } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + '/api' + path, opts);
+  const data = await r.json();
+  if (r.status === 401) {
+    // Session expired or revoked — force re-login
+    sessionToken = null;
+    sessionStorage.removeItem('session_token');
+    showLoginScreen();
+    throw new Error('session_expired');
+  }
+  if (r.status === 403) throw new Error(data.detail || 'Access denied');
+  if (!r.ok) throw new Error(data.detail || `Error ${r.status}`);
+  return data;
+}
+
+function connectWS() {
+  if (!me.telegram_id) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/${me.telegram_id}`);
+  ws.onopen = () => {
+    document.getElementById('ws-dot').classList.add('live');
+    document.getElementById('live-badge').style.display = 'inline-flex';
+    setInterval(() => ws?.readyState === 1 && ws.send('ping'), 25000);
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-dot').classList.remove('live');
+    document.getElementById('live-badge').style.display = 'none';
+    setTimeout(connectWS, 3000);
+  };
+  ws.onmessage = (e) => {
+    if (e.data === 'pong') return;
+    try { handleRealtime(JSON.parse(e.data)); } catch(e) {}
+  };
+}
+
+function handleRealtime(event) {
+  notifications.unshift(event);
+  if (notifications.length > 50) notifications.pop();
+  renderNotifs();
+  document.getElementById('notif-dot').classList.add('show');
+  if (event.type === 'conversion') {
+    loadSummary(); loadConversions();
+    showToast(event.title, event.body, '✅');
+  } else if (event.type === 'message') {
+    loadUnreadCount();
+    if (document.getElementById('tab-inbox').classList.contains('active')) loadMessages();
+    showToast(event.title, event.body, '💬');
+  } else if (event.type === 'click') {
+    loadSummary();
+  }
+}
+
+async function loadAll() {
+  try { await fetch(API + '/health'); } catch(e) { return; }
+  const tasks = [loadSummary(), loadCampaigns(), loadAccounts(), loadConversions(), loadMessages(), loadFunnels(), loadUnreadCount()];
+  if (me.is_admin) tasks.push(loadUsers(), loadTokens());
+  await Promise.allSettled(tasks);
+}
+
+async function loadSummary() {
+  try {
+    const d = await api('/conversions/summary');
+    document.getElementById('s-clicks').textContent = d.total_clicks.toLocaleString();
+    document.getElementById('s-convs').textContent = d.total_conversions.toLocaleString();
+    document.getElementById('s-rate').textContent = d.overall_rate + '%';
+    const rows = d.by_campaign.slice(0,6).map(c => {
+      const pct = Math.min(100, c.rate * 5);
+      return `<tr><td><div style="font-size:11px;font-weight:500;margin-bottom:3px">${esc(c.name)}</div>
+        <div class="pbar"><div class="pbar-fill pbar-blue" style="width:${pct}%"></div></div></td>
+        <td style="font-weight:600">${c.conversions}</td>
+        <td><span class="badge badge-green">${c.rate}%</span></td></tr>`;
+    });
+    document.getElementById('top-camp-tbody').innerHTML = rows.length
+      ? rows.join('') : '<tr><td colspan="3" class="tbl-empty">No campaigns yet</td></tr>';
+  } catch(e) {}
+}
+
+async function loadUnreadCount() {
+  try {
+    const d = await api('/messages/unread-count');
+    const b = document.getElementById('inbox-nav-badge');
+    if (d.unread > 0) { b.textContent = d.unread; b.classList.add('show'); }
+    else { b.classList.remove('show'); }
+  } catch(e) {}
+}
+
+async function loadAccounts() {
+  try {
+    const url = me.is_admin ? '/accounts?all_users=true' : '/accounts';
+    accountsCache = await api(url);
+    document.getElementById('acct-count').textContent = '(' + accountsCache.length + ')';
+    document.getElementById('s-accts').textContent = accountsCache.filter(a=>a.is_active).length;
+    document.getElementById('s-accts-sub').textContent =
+      accountsCache.filter(a=>a.account_type==='BOT'&&a.is_active).length + ' bots · ' +
+      accountsCache.filter(a=>a.account_type==='PERSONAL'&&a.is_active).length + ' personal';
+
+    document.getElementById('acct-health').innerHTML = accountsCache.length
+      ? accountsCache.map(a => `
+        <div style="display:flex;align-items:center;gap:9px;padding:9px 14px;border-bottom:1px solid var(--border)">
+          <div style="font-size:16px">${a.account_type==='BOT'?'🤖':a.account_type==='CHANNEL'?'📢':'👤'}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.label||a.identifier_hint)}</div>
+            <div style="font-size:10px;color:var(--text2)">${a.account_type}${a.meta_pixel_id?' · Pixel ✅':' · ⚠️ No Pixel'}</div>
+          </div>
+          <span class="badge ${a.is_active?'badge-green':'badge-red'}">${a.is_active?'Live':'Off'}</span>
+        </div>`).join('')
+      : '<div style="padding:16px;text-align:center;color:var(--text2);font-size:12px">No accounts connected</div>';
+
+    const own = me.is_admin ? accountsCache : accountsCache.filter(a => a.user_id === me.telegram_id);
+    document.getElementById('accounts-grid').innerHTML = own.length
+      ? own.map(a => `
+        <div class="acct-card">
+          <div class="acct-head">
+            <div class="acct-icon ${a.account_type==='BOT'?'ai-bot':a.account_type==='CHANNEL'?'ai-channel':'ai-personal'}">
+              ${a.account_type==='BOT'?'🤖':a.account_type==='CHANNEL'?'📢':'👤'}
+            </div>
+            <div style="flex:1;min-width:0">
+              <div class="acct-name">${esc(a.label||a.identifier_hint)}</div>
+              <div class="acct-type">${a.account_type}${a.proxy_set?' · Proxy':''}</div>
+              <div class="acct-pixel">${a.meta_pixel_id?'Pixel: '+a.meta_pixel_id.slice(0,12)+'…':'⚠️ No Pixel set'}</div>
+            </div>
+            <span class="badge ${a.is_active?'badge-green':'badge-red'}" style="flex-shrink:0">${a.is_active?'Live':'Off'}</span>
+          </div>
+          <div class="acct-foot">
+            <button class="btn btn-xs" onclick="openEditAccount(${a.id})">✏️ Edit</button>
+            <button class="btn btn-xs ${a.is_active?'btn-danger':''}" onclick="toggleAccount(${a.id},${!a.is_active})">${a.is_active?'Deactivate':'Activate'}</button>
+            <button class="btn btn-danger btn-xs" onclick="deleteAccount(${a.id})">Remove</button>
+          </div>
+        </div>`).join('')
+      : `<div class="empty" style="grid-column:1/-1"><span class="empty-icon">🔌</span><div class="empty-title">No accounts yet</div><div class="empty-sub">Add a bot, personal account, or channel to start tracking</div></div>`;
+
+    const active = accountsCache.filter(a=>a.is_active);
+    document.getElementById('cn-account').innerHTML = active.length
+      ? '<option value="">Select account…</option>' + active.map(a=>`<option value="${a.id}">${esc(a.label||a.identifier_hint)} (${a.account_type})</option>`).join('')
+      : '<option value="">No active accounts — add one first</option>';
+  } catch(e) {}
+}
+
+async function loadCampaigns() {
+  try {
+    _campsCache = await api('/campaigns');
+    document.getElementById('camp-count').textContent = '(' + _campsCache.length + ')';
+    const evC = {Lead:'blue',CompleteRegistration:'purple',Subscribe:'green',Purchase:'orange',Contact:'gray',ViewContent:'gray',InitiateCheckout:'orange'};
+    if (!_campsCache.length) {
+      document.getElementById('camp-tbody').innerHTML = `<tr><td colspan="8"><div class="empty"><span class="empty-icon">📊</span><div class="empty-title">No campaigns yet</div><div class="empty-sub">Create a campaign to get your tracking URL</div><button class="btn btn-primary" onclick="openModal('modal-campaign')">+ Create Campaign</button></div></td></tr>`;
+      return;
+    }
+    document.getElementById('camp-tbody').innerHTML = _campsCache.map(c => {
+      const url = `${API}/t/${c.slug}`;
+      return `<tr>
+        <td><div style="font-weight:500;font-size:12px">${esc(c.name)}</div><div style="font-size:10px;color:var(--text2);margin-top:1px">${esc(c.target_telegram_username)}</div></td>
+        <td><div class="url-cell"><span class="url-mono">${url}</span><button class="copy-btn" onclick="copyText('${url}',this)">Copy</button></div></td>
+        <td><button class="btn btn-ghost btn-xs" onclick="openCampaignConfig(${c.id},'${esc(c.name)}')">⚙️ Configure</button></td>
+        <td style="font-family:var(--mono);font-size:11px">${c.total_clicks.toLocaleString()}</td>
+        <td style="font-family:var(--mono);font-size:11px">${c.total_conversions.toLocaleString()}</td>
+        <td><span class="badge ${c.conversion_rate>10?'badge-green':c.conversion_rate>3?'badge-orange':'badge-gray'}">${c.conversion_rate}%</span></td>
+        <td><span class="badge ${c.is_active?'badge-green':'badge-gray'}"><span class="dot ${c.is_active?'dot-green':'dot-gray'}"></span>${c.is_active?'Active':'Paused'}</span></td>
+        <td><div style="display:flex;gap:3px">
+          <button class="btn btn-xs" onclick="toggleCampaign(${c.id},${!c.is_active})">${c.is_active?'Pause':'Resume'}</button>
+          <button class="btn btn-danger btn-xs" onclick="deleteCampaign(${c.id})">Del</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+    document.getElementById('mc-campaign').innerHTML = '<option value="">Select campaign…</option>' +
+      _campsCache.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    document.getElementById('fn-campaign').innerHTML = '<option value="">Select campaign…</option>' +
+      _campsCache.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    document.getElementById('af-campaign').innerHTML = '<option value="">Select campaign…</option>' +
+      _campsCache.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    populateFunnelCampaignFilters();
+  } catch(e) {}
+}
+
+async function loadConversions() {
+  const filter = v('conv-filter');
+  const tFilter = v('conv-trigger-filter');
+  try {
+    const params = new URLSearchParams({ limit: '100' });
+    if (filter) params.set('event_type', filter);
+    if (tFilter) params.set('trigger_type', tFilter);
+    const logs = await api('/conversions?' + params);
+    const evC = {Lead:'blue',Contact:'purple',CompleteRegistration:'purple',Subscribe:'green',Purchase:'orange',InitiateCheckout:'orange'};
+    const trig = {bot_start:'🚀',first_message:'💬',keyword:'🔑',channel_join:'📢',manual:'👤',webhook:'🌐',any_message:'📨'};
+
+    if (!logs.length) {
+      const empty = '<tr><td colspan="8" class="tbl-empty">No conversions yet</td></tr>';
+      document.getElementById('conv-tbody').innerHTML = empty;
+      document.getElementById('recent-conv-tbody').innerHTML = '<tr><td colspan="6" class="tbl-empty">No conversions yet</td></tr>';
+      return;
+    }
+
+    const makeRow = (l, full=true) => `<tr>
+      <td title="${l.trigger_type||''}">${trig[l.trigger_type||'']||'—'}</td>
+      <td><span class="badge badge-${evC[l.event_type]||'gray'}">${l.event_type}</span></td>
+      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${esc(l.campaign_name||'#'+l.campaign_id)}</td>
+      <td style="font-family:var(--mono);font-size:10px;color:var(--text2)">${l.telegram_username?'@'+l.telegram_username:(l.telegram_user_id||'—')}</td>
+      ${full?`<td style="font-size:11px;color:var(--text2)">${l.event_value?l.event_value+' '+(l.event_currency||''):'—'}</td>
+      <td style="font-size:10px;color:var(--text3);font-family:var(--mono)">${l.client_ip||'—'}</td>`:''}
+      <td style="font-size:11px;color:var(--text3);white-space:nowrap">${timeAgo(l.fired_at)}</td>
+      <td><span class="badge ${l.status==='fired'?'badge-green':'badge-red'}"><span class="dot ${l.status==='fired'?'dot-green':'dot-red'}"></span>${l.status}</span></td>
+    </tr>`;
+
+    document.getElementById('conv-tbody').innerHTML = logs.map(l=>makeRow(l,true)).join('');
+    document.getElementById('recent-conv-tbody').innerHTML = logs.slice(0,5).map(l=>makeRow(l,false)).join('');
+  } catch(e) {}
+}
+
+async function loadFunnels() {
+  try {
+    const campFilter = v('funnel-campaign-filter');
+    const params = campFilter ? '?campaign_id=' + campFilter : '';
+    const funnels = await api('/funnels' + params);
+    document.getElementById('funnel-count').textContent = '(' + funnels.length + ')';
+
+    if (!funnels.length) {
+      document.getElementById('funnels-list').innerHTML = `
+        <div class="empty"><span class="empty-icon">🎯</span>
+          <div class="empty-title">No funnels yet</div>
+          <div class="empty-sub">Auto-generate one from a campaign's triggers, or build one manually</div>
+          <div style="display:flex;gap:8px;justify-content:center">
+            <button class="btn" onclick="openAutoGenerateFunnel()">⚡ Auto-generate</button>
+            <button class="btn btn-primary" onclick="openModal('modal-funnel')">+ Create Funnel</button>
+          </div>
+        </div>`;
+      return;
+    }
+
+    const campNameById = {};
+    _campsCache.forEach(c => campNameById[c.id] = c.name);
+
+    document.getElementById('funnels-list').innerHTML = funnels.map(f => {
+      const first = f.steps[0]?.count || 0;
+      return `<div class="card" style="margin-bottom:14px">
+        <div class="card-header">
+          <span class="card-title">
+            🎯 ${esc(f.name)}
+            ${f.is_default?'<span class="badge badge-blue" style="margin-left:6px">Auto</span>':''}
+            <span style="font-size:11px;color:var(--text3);font-weight:400;margin-left:8px">${esc(campNameById[f.campaign_id]||'Campaign #'+f.campaign_id)}</span>
+          </span>
+          <div class="card-actions">
+            <button class="btn btn-xs" onclick="openEditFunnelSteps(${f.id})">✏️ Edit Steps</button>
+            <button class="btn btn-danger btn-xs" onclick="deleteFunnel(${f.id})">Delete</button>
+          </div>
+        </div>
+        <div class="funnel-visual">
+          ${f.steps.map((s,i) => {
+            const pct = first>0 ? Math.round(s.count/first*100) : (i===0?100:0);
+            const prev = i>0 ? f.steps[i-1].count : null;
+            const drop = prev && prev>0 ? Math.round((1-s.count/prev)*100) : null;
+            const trigLabels = {bot_start:'🚀 Bot /start',first_message:'💬 First DM',any_message:'📨 Any msg',keyword:'🔑 Keyword',channel_join:'📢 Channel join',manual:'👤 Manual',webhook:'🌐 Webhook'};
+            const kwSuffix = s.keywords ? ` [${s.keywords.split(',').slice(0,2).join(',')}${s.keywords.split(',').length>2?'…':''}]` : '';
+            return `<div class="fv-step">
+              <div class="fv-left">
+                <div class="fv-circle ${s.count>0?'has-data':''}">${s.step_order}</div>
+                ${i<f.steps.length-1?'<div class="fv-line"></div>':''}
+              </div>
+              <div class="fv-body">
+                <div class="fv-card">
+                  <div class="fv-name">${esc(s.label)}</div>
+                  <div class="fv-stats">
+                    <span class="fv-count">${s.count.toLocaleString()}</span>
+                    <span>${trigLabels[s.trigger_type]||s.trigger_type||''}${esc(kwSuffix)} → <span style="color:var(--blue)">${esc(s.event_name||'')}</span></span>
+                    ${drop!==null?`<span class="drop-pill">↓ ${drop}% drop</span>`:''}
+                    <span style="margin-left:auto;font-size:10px;color:var(--text3)">${pct}%</span>
+                  </div>
+                  <div class="fv-bar"><div class="fv-bar-fill" style="width:${pct}%"></div></div>
+                </div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error('loadFunnels:', e); }
+}
+
+function populateFunnelCampaignFilters() {
+  const opts = '<option value="">All campaigns</option>' +
+    _campsCache.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const filterSel = document.getElementById('funnel-campaign-filter');
+  if (filterSel) { const cur = filterSel.value; filterSel.innerHTML = opts; filterSel.value = cur; }
+}
+
+async function loadMessages() {
+  try {
+    allMessages = await api('/messages?limit=200');
+    renderConvList(allMessages);
+  } catch(e) {}
+}
+
+function groupByConv(msgs) {
+  const convs = {};
+  for (const m of msgs) {
+    const key = `${m.account_id}:${m.tg_chat_id}`;
+    if (!convs[key]) convs[key] = { key, msgs:[], latest:m, unread:0, name:m.tg_username||m.tg_first_name||`User ${m.tg_user_id}`, acct:m.account_label };
+    convs[key].msgs.push(m);
+    if (!m.is_read && m.direction==='inbound') convs[key].unread++;
+  }
+  return Object.values(convs).sort((a,b) => new Date(b.latest.received_at)-new Date(a.latest.received_at));
+}
+
+function renderConvList(msgs) {
+  const convs = groupByConv(msgs);
+  if (!convs.length) { document.getElementById('conv-list').innerHTML='<div style="padding:16px;text-align:center;color:var(--text2);font-size:12px">No messages yet</div>'; return; }
+  document.getElementById('conv-list').innerHTML = convs.map(c => `
+    <div class="conv-item ${c.unread?'unread':''} ${activeConvId===c.key?'active':''}" onclick="openConv('${c.key}')">
+      <div class="conv-av">${c.name[0]?.toUpperCase()||'?'}</div>
+      <div class="conv-info">
+        <div class="conv-name">${esc(c.name)}</div>
+        <div class="conv-preview">${esc(c.latest.text||'[media]')}</div>
+      </div>
+      <div class="conv-meta">
+        <div class="conv-time">${timeAgo(c.latest.received_at)}</div>
+        ${c.unread?'<div class="unread-dot"></div>':''}
+      </div>
+    </div>`).join('');
+}
+
+function filterConvs(q) {
+  const filtered = q ? allMessages.filter(m =>
+    (m.tg_username||'').toLowerCase().includes(q.toLowerCase()) ||
+    (m.tg_first_name||'').toLowerCase().includes(q.toLowerCase()) ||
+    (m.text||'').toLowerCase().includes(q.toLowerCase())
+  ) : allMessages;
+  renderConvList(filtered);
+}
+
+async function openConv(key) {
+  activeConvId = key;
+  const [accountId, chatId] = key.split(':').map(Number);
+  const conv = groupByConv(allMessages).find(c=>c.key===key);
+  const msgs = allMessages.filter(m=>m.account_id===accountId&&m.tg_chat_id===chatId)
+    .sort((a,b)=>new Date(a.received_at)-new Date(b.received_at));
+  if (!conv) return;
+  document.getElementById('inbox-main').innerHTML = `
+    <div class="inbox-main-head">
+      <div style="font-size:22px">👤</div>
+      <div><div style="font-size:13px;font-weight:600">${esc(conv.name)}</div>
+        <div style="font-size:10px;color:var(--text2)">${esc(conv.acct||'Account '+accountId)}</div></div>
+    </div>
+    <div class="inbox-msgs" id="inbox-msgs">
+      ${msgs.map(m=>`<div>
+        <div class="msg-bubble ${m.direction==='inbound'?'msg-in':'msg-out'}">${esc(m.text||'[empty]')}</div>
+        <div class="msg-time" style="${m.direction==='outbound'?'text-align:right':''}">${timeAgo(m.received_at)}</div>
+      </div>`).join('')}
+    </div>`;
+  const unreadIds = msgs.filter(m=>!m.is_read&&m.direction==='inbound').map(m=>m.id);
+  for (const id of unreadIds) await api(`/messages/${id}/read`,'PATCH').catch(()=>{});
+  allMessages = allMessages.map(m => unreadIds.includes(m.id) ? {...m,is_read:true} : m);
+  renderConvList(allMessages);
+  loadUnreadCount();
+  setTimeout(()=>{ const el=document.getElementById('inbox-msgs'); if(el) el.scrollTop=el.scrollHeight; },50);
+}
+
+async function markAllRead() {
+  await api('/messages/read-all','POST',{}).catch(()=>{});
+  await loadMessages(); loadUnreadCount();
+}
+
+async function loadUsers() {
+  try {
+    const users = await api('/users');
+    document.getElementById('users-list').innerHTML = users.length
+      ? users.map(u=>`<div class="list-row">
+          <div class="list-av">${u.first_name[0]?.toUpperCase()||'?'}</div>
+          <div style="flex:1">
+            <div style="font-size:12px;font-weight:500">${esc(u.first_name)} ${u.is_admin?'<span class="badge badge-purple" style="font-size:9px">Admin</span>':''} ${u.login_type==='local'?'<span class="badge badge-gray" style="font-size:9px">No Telegram</span>':''}</div>
+            <div style="font-size:10px;color:var(--text2);font-family:var(--mono)">${u.login_type==='local' ? ('login: '+esc(u.login_username||'')) : ('ID: ' + u.telegram_id + ' · ' + (u.username||'no username'))}</div>
+            ${u.last_login?`<div style="font-size:10px;color:var(--text3)">Last seen: ${timeAgo(u.last_login)}</div>`:''}
+          </div>
+          <span class="badge ${u.is_active?'badge-green':'badge-gray'}">${u.is_active?'Active':'Revoked'}</span>
+          ${u.telegram_id!==me.telegram_id?`<button class="btn btn-danger btn-xs" onclick="revokeUser(${u.telegram_id})">Revoke</button>`:''}
+        </div>`).join('')
+      : '<div style="padding:16px;text-align:center;color:var(--text2);font-size:12px">No users yet</div>';
+  } catch(e) {}
+}
+
+async function loadTokens() {
+  try {
+    const tokens = await api('/tokens');
+    document.getElementById('tokens-list').innerHTML = tokens.length
+      ? tokens.map(t => {
+          const expired = t.expires_at && new Date(t.expires_at) < new Date();
+          const expiry = t.expires_at ? (expired?'⏰ Expired':'exp '+new Date(t.expires_at).toLocaleDateString()) : 'No expiry';
+          const link = `https://t.me/${botUsername}?start=${t.token}`;
+          return `<div class="list-row">
+            <div class="token-code">${t.token}</div>
+            <span class="badge ${expired?'badge-red':'badge-green'}">${expired?'Expired':'Active'}</span>
+            <span style="font-size:10px;color:var(--text2);white-space:nowrap">${expiry}</span>
+            ${!expired?`<button class="copy-btn" onclick="copyText('${link}',this)">Copy Link</button>`:''}
+            <button class="btn btn-danger btn-xs" onclick="deleteToken(${t.id})">Del</button>
+          </div>`;
+        }).join('')
+      : '<div style="padding:16px;text-align:center;color:var(--text2);font-size:12px">No tokens yet</div>';
+  } catch(e) {}
+}
+
+let templates = [];
+async function loadTemplates() {
+  try {
+    templates = await api('/campaign-templates');
+    document.getElementById('cn-templates').innerHTML = templates.map(t =>
+      `<button class="btn btn-ghost btn-xs" title="${esc(t.description)}" data-tpl="${t.id}" onclick="selectTemplate('${t.id}')">${esc(t.name)}</button>`
+    ).join('');
+  } catch(e) {}
+}
+
+let selectedTemplate = null;
+function selectTemplate(id) {
+  selectedTemplate = id;
+  document.querySelectorAll('[data-tpl]').forEach(b => {
+    b.style.borderColor = b.dataset.tpl === id ? 'var(--blue)' : '';
+    b.style.color = b.dataset.tpl === id ? 'var(--blue)' : '';
+  });
+}
+
+async function openCampaignConfig(id, name) {
+  configCampId = id;
+  document.getElementById('cc-camp-id').value = id;
+  document.getElementById('cc-camp-name').textContent = name;
+  openModal('modal-camp-config');
+  await Promise.all([loadTriggers(id), loadWebhooks(id)]);
+}
+
+async function loadTriggers(campId) {
+  try {
+    const triggers = await api(`/campaigns/${campId}/triggers`);
+    const tLabels = {bot_start:'🚀 Bot /start',first_message:'💬 First DM',any_message:'📨 Any msg',keyword:'🔑 Keyword',channel_join:'📢 Channel join',manual:'👤 Manual',webhook:'🌐 Webhook'};
+    document.getElementById('cc-triggers-list').innerHTML = triggers.length
+      ? triggers.map(t=>`<div class="trigger-row">
+          <div class="trigger-icon">${tLabels[t.trigger_type]?.split(' ')[0]||'—'}</div>
+          <div class="trigger-info">
+            <span class="trigger-type">${tLabels[t.trigger_type]||t.trigger_type}</span>
+            → <span class="trigger-event">${t.event_name}</span>
+            ${t.keywords?`<span style="font-size:10px;color:var(--text3)"> [${t.keywords.split(',').slice(0,3).join(',')}]</span>`:''}
+            ${t.value?`<span style="font-size:10px;color:var(--green)"> ${t.value} ${t.currency||'USD'}</span>`:''}
+          </div>
+          <span class="badge ${t.is_active?'badge-green':'badge-gray'}">${t.is_active?'On':'Off'}</span>
+          <button class="btn btn-danger btn-xs" onclick="deleteTrigger(${t.id})">×</button>
+        </div>`)
+        .join('')
+      : '<div style="font-size:12px;color:var(--text2);padding:8px 0">No triggers yet. Add one or apply a template.</div>';
+  } catch(e) {}
+}
+
+function showAddTrigger() {
+  document.getElementById('cc-add-trigger').style.display = 'block';
+}
+function onTriggerTypeChange() {
+  const kw = document.getElementById('ntr-type').value === 'keyword';
+  document.getElementById('ntr-keywords-row').style.display = kw ? 'block' : 'none';
+}
+
+async function saveTrigger() {
+  const matchModeEl = document.querySelector('input[name="ntr-match-mode"]:checked');
+  const body = {
+    trigger_type: v('ntr-type'), event_name: v('ntr-event')||'Lead',
+    keywords: v('ntr-keywords')||null,
+    match_mode: matchModeEl ? matchModeEl.value : 'any',
+    value: v('ntr-value')?parseFloat(v('ntr-value')):null,
+    currency: v('ntr-currency')||'USD',
+    content_name: v('ntr-content-name')||null,
+  };
+  try {
+    await api(`/campaigns/${configCampId}/triggers`,'POST',body);
+    document.getElementById('cc-add-trigger').style.display='none';
+    ['ntr-keywords','ntr-value','ntr-content-name'].forEach(x=>setV(x,''));
+    setV('ntr-event','Lead');
+    const anyRadio = document.querySelector('input[name="ntr-match-mode"][value="any"]');
+    if (anyRadio) anyRadio.checked = true;
+    await loadTriggers(configCampId);
+  } catch(e) { alert(e.message); }
+}
+
+async function deleteTrigger(id) {
+  if (!confirm('Delete this trigger?')) return;
+  await api(`/triggers/${id}`,'DELETE').catch(e=>alert(e.message));
+  await loadTriggers(configCampId);
+}
+
+async function loadWebhooks(campId) {
+  try {
+    const hooks = await api(`/campaigns/${campId}/webhooks`);
+    document.getElementById('cc-webhooks-list').innerHTML = hooks.length
+      ? hooks.map(w=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:7px;margin-bottom:5px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;font-weight:500">${esc(w.label||'Webhook')}</div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(w.webhook_url)}</div>
+            <div style="font-size:10px;color:var(--text3)">${w.hit_count} hits${w.last_hit_at?' · last '+timeAgo(w.last_hit_at):''}</div>
+          </div>
+          <button class="copy-btn" onclick="copyText('${esc(w.webhook_url)}',this)">Copy</button>
+          <button class="btn btn-danger btn-xs" onclick="deleteWebhook(${w.id})">×</button>
+        </div>`).join('')
+      : '<div style="font-size:12px;color:var(--text2);padding:8px 0">No webhooks yet.</div>';
+  } catch(e) {}
+}
+
+async function createWebhook() {
+  const label = prompt('Label for this webhook (e.g. ClickFunnels, Stripe):');
+  try {
+    const r = await api(`/campaigns/${configCampId}/webhooks`,'POST',{label:label||null});
+    navigator.clipboard.writeText(r.webhook_url).catch(()=>{});
+    await loadWebhooks(configCampId);
+    showToast('Webhook created', 'URL copied to clipboard', '🌐');
+  } catch(e) { alert(e.message); }
+}
+
+async function deleteWebhook(id) {
+  if (!confirm('Delete this webhook?')) return;
+  await api(`/webhooks/${id}`,'DELETE').catch(e=>alert(e.message));
+  await loadWebhooks(configCampId);
+}
+
+async function createCampaign() {
+  const name=v('cn-name'),acct=v('cn-account'),target=v('cn-target'),event=v('cn-event'),slug=v('cn-slug');
+  if (!name) return showErr('cn-err','Campaign name required');
+  if (!acct) return showErr('cn-err','Select an account');
+  if (!target) return showErr('cn-err','Target username required');
+  hideErr('cn-err');
+  await btnLoad('cn-btn', async()=>{
+    const d = await api('/campaigns','POST',{name,account_id:parseInt(acct),target_telegram_username:target,event_type:event,slug:slug||undefined});
+    if (selectedTemplate && d.id) {
+      await api(`/campaigns/${d.id}/apply-template`,'POST',{template_id:selectedTemplate}).catch(()=>{});
+    }
+    closeModal('modal-campaign');
+    ['cn-name','cn-target','cn-slug'].forEach(x=>setV(x,''));
+    selectedTemplate=null;
+    document.querySelectorAll('[data-tpl]').forEach(b=>{b.style.borderColor='';b.style.color='';});
+    await loadCampaigns(); await loadSummary();
+  },'cn-err');
+}
+
+async function addBot() {
+  const token=v('ab-token'),label=v('ab-label'),pixel=v('ab-pixel'),capi=v('ab-capi'),proxy=v('ab-proxy');
+  if (!token||!token.includes(':')) return showErr('ab-err','Valid bot token required');
+  hideErr('ab-err');
+  await btnLoad('ab-btn',async()=>{
+    await api('/accounts/bot','POST',{bot_token:token,label,meta_pixel_id:pixel,meta_capi_token:capi,proxy_string:proxy});
+    closeModal('modal-bot');
+    ['ab-label','ab-token','ab-pixel','ab-capi','ab-proxy'].forEach(x=>setV(x,''));
+    await loadAccounts(); await loadSummary();
+  },'ab-err');
+}
+
+function openEditAccount(id) {
+  const a=accountsCache.find(x=>x.id===id); if(!a) return;
+  setV('ea-id',id); setV('ea-label',a.label||''); setV('ea-pixel',a.meta_pixel_id||'');
+  setV('ea-capi',''); setV('ea-proxy','');
+  hideErr('ea-err'); hideErr('ea-ok'); openModal('modal-edit-account');
+}
+
+async function saveAccount() {
+  const id=parseInt(v('ea-id'));
+  const body={label:v('ea-label'),meta_pixel_id:v('ea-pixel')};
+  const capi=v('ea-capi'); if(capi) body.meta_capi_token=capi;
+  const proxy=v('ea-proxy'); if(proxy) body.proxy_string=proxy;
+  hideErr('ea-err'); hideErr('ea-ok');
+  await btnLoad('ea-save-btn',async()=>{
+    await api(`/accounts/${id}`,'PATCH',body);
+    const ok=document.getElementById('ea-ok'); ok.textContent='✅ Saved!'; ok.style.display='flex';
+    await loadAccounts();
+  },'ea-err');
+}
+
+async function testPixel() {
+  const id=parseInt(v('ea-id')); hideErr('ea-err'); hideErr('ea-ok');
+  const btn=document.getElementById('ea-test-btn'); btn.textContent='Testing…'; btn.disabled=true;
+  try {
+    const r=await api(`/accounts/${id}/test-pixel`,'POST');
+    const ok=document.getElementById('ea-ok');
+    ok.textContent=r.ok?'✅ '+r.message:'❌ Failed: '+JSON.stringify(r.detail);
+    ok.className='alert '+(r.ok?'alert-success':'alert-error'); ok.style.display='flex';
+  } catch(e){showErr('ea-err',e.message);}
+  btn.textContent='🧪 Test Pixel'; btn.disabled=false;
+}
+
+async function toggleAccount(id,active) {
+  await api(`/accounts/${id}`,'PATCH',{is_active:active}).catch(e=>alert(e.message));
+  await loadAccounts(); await loadSummary();
+}
+async function deleteAccount(id) {
+  if(!confirm('Remove this account?')) return;
+  await api(`/accounts/${id}`,'DELETE').catch(e=>alert(e.message));
+  await loadAccounts(); await loadCampaigns(); await loadSummary();
+}
+async function toggleCampaign(id,active) {
+  await api(`/campaigns/${id}`,'PATCH',{is_active:active}).catch(e=>alert(e.message));
+  await loadCampaigns(); await loadSummary();
+}
+async function deleteCampaign(id) {
+  if(!confirm('Delete this campaign?')) return;
+  await api(`/campaigns/${id}`,'DELETE').catch(e=>alert(e.message));
+  await loadCampaigns(); await loadSummary();
+}
+let guMode = 'telegram';
+function setGuMode(mode) {
+  guMode = mode;
+  document.getElementById('gu-mode-telegram').style.display = mode==='telegram' ? '' : 'none';
+  document.getElementById('gu-mode-local').style.display = mode==='local' ? '' : 'none';
+  document.getElementById('gu-tab-tg').className = 'btn btn-xs' + (mode==='telegram' ? ' btn-primary' : '');
+  document.getElementById('gu-tab-local').className = 'btn btn-xs' + (mode==='local' ? ' btn-primary' : '');
+  hideErr('gu-err');
+}
+
+async function grantAccess() {
+  if (guMode === 'local') {
+    const uname=v('gul-username'), pw=v('gul-password'), name=v('gul-name');
+    const isAdmin = document.getElementById('gul-admin')?.checked || false;
+    if(!uname) return showErr('gu-err','Username required');
+    if(!pw||pw.length<8) return showErr('gu-err','Password must be at least 8 characters');
+    hideErr('gu-err');
+    await btnLoad('gu-btn',async()=>{
+      await api('/users/local','POST',{username:uname,password:pw,first_name:name,is_admin:isAdmin});
+      closeModal('modal-user'); ['gul-name','gul-username','gul-password'].forEach(x=>setV(x,''));
+      await loadUsers();
+    },'gu-err');
+    return;
+  }
+  const id=v('gu-id'),name=v('gu-name'),uname=v('gu-username');
+  if(!id||isNaN(parseInt(id))) return showErr('gu-err','Valid numeric Telegram ID required');
+  if(!name) return showErr('gu-err','First name required');
+  hideErr('gu-err');
+  await btnLoad('gu-btn',async()=>{
+    await api('/users','POST',{telegram_id:parseInt(id),first_name:name,username:uname});
+    closeModal('modal-user'); ['gu-id','gu-name','gu-username'].forEach(x=>setV(x,''));
+    await loadUsers();
+  },'gu-err');
+}
+async function revokeUser(id) {
+  if(!confirm('Revoke access?')) return;
+  await api(`/users/${id}`,'DELETE').catch(e=>alert(e.message));
+  await loadUsers();
+}
+async function generateToken() {
+  const hours=parseInt(v('tok-expires')); hideErr('tok-err');
+  document.getElementById('tok-result').style.display='none';
+  await btnLoad('tok-btn',async()=>{
+    const d=await api('/tokens','POST',{expires_hours:hours,reusable:true});
+    const link=`https://t.me/${botUsername}?start=${d.token}`;
+    document.getElementById('tok-link').textContent=link;
+    document.getElementById('tok-result').style.display='block';
+    await loadTokens();
+  },'tok-err');
+}
+async function deleteToken(id) {
+  if(!confirm('Delete token?')) return;
+  await api(`/tokens/${id}`,'DELETE').catch(e=>alert(e.message));
+  await loadTokens();
+}
+
+async function fireManualConversion() {
+  const campId=v('mc-campaign');
+  if(!campId) return showErr('mc-err','Select a campaign');
+  const userInput=v('mc-user').replace(/^@/,'');
+  const tgId=isNaN(parseInt(userInput))?null:parseInt(userInput);
+  const tgUsername=isNaN(parseInt(userInput))?userInput:null;
+  const body={campaign_id:parseInt(campId),telegram_user_id:tgId,telegram_username:tgUsername||null,
+    phone:v('mc-phone')||null,event_name:v('mc-event')||'Lead',
+    value:v('mc-value')?parseFloat(v('mc-value')):null,currency:v('mc-currency')||'USD',
+    content_name:v('mc-content-name')||null,order_id:v('mc-order-id')||null};
+  hideErr('mc-err');
+  document.getElementById('mc-result').style.display='none';
+  await btnLoad('mc-btn',async()=>{
+    const r=await api('/conversions/manual','POST',body);
+    const ok=document.getElementById('mc-result');
+    if(r.status==='fired'){
+      ok.textContent=`✅ ${body.event_name} fired! Events received: ${r.events_received}`;
+      ok.className='alert alert-success'; ok.style.display='flex';
+      await loadConversions(); await loadSummary();
+    } else {
+      ok.textContent=`❌ Error: ${JSON.stringify(r.error)}`;
+      ok.className='alert alert-error'; ok.style.display='flex';
+    }
+  },'mc-err');
+}
+
+async function addChannel() {
+  const identifier=v('ch-identifier');
+  if(!identifier) return showErr('ch-err','Channel @username or invite link required');
+  hideErr('ch-err');
+  await btnLoad('ch-btn',async()=>{
+    const monitorId=v('ch-monitor-account');
+    await api('/accounts/channel','POST',{
+      label:v('ch-label')||identifier, identifier,
+      monitor_account_id:monitorId?parseInt(monitorId):null,
+      meta_pixel_id:v('ch-pixel')||null, meta_capi_token:v('ch-capi')||null,
+    });
+    closeModal('modal-channel');
+    ['ch-label','ch-identifier','ch-pixel','ch-capi'].forEach(x=>setV(x,''));
+    await loadAccounts(); await loadSummary();
+  },'ch-err');
+}
+
+let ppStep=1, ppFlowToken=null;
+async function personalNext() {
+  hideErr('pp-err');
+  if(ppStep===1){
+    const phone=v('pp-phone');
+    if(!phone.startsWith('+')) return showErr('pp-err','Use international format: +8801…');
+    await btnLoad('pp-btn',async()=>{
+      const d=await api('/accounts/personal/step1','POST',{phone,user_id:me.telegram_id,
+        meta_pixel_id:v('pp-pixel'),meta_capi_token:v('pp-capi'),proxy_string:v('pp-proxy')||null});
+      ppFlowToken=d.flow_token; ppStep=2;
+      document.getElementById('pp-1').style.display='none';
+      document.getElementById('pp-2').style.display='block';
+      document.getElementById('ps-1').classList.add('done');
+      document.getElementById('ps-2').classList.add('active');
+      document.getElementById('pp-btn').textContent='Verify →';
+    },'pp-err');
+  } else if(ppStep===2){
+    const code=v('pp-code').replace(/\s/g,'');
+    if(!code) return showErr('pp-err','Enter the code from your Telegram app');
+    await btnLoad('pp-btn',async()=>{
+      await api('/accounts/personal/step2','POST',{flow_token:ppFlowToken,code});
+      ppStep=3;
+      document.getElementById('pp-2').style.display='none';
+      document.getElementById('pp-3').style.display='block';
+      document.getElementById('ps-2').classList.add('done');
+      document.getElementById('ps-3').classList.add('done');
+      document.getElementById('pp-footer').innerHTML='<button class="btn btn-primary" onclick="closeModal(\'modal-personal\')">Done ✓</button>';
+      await loadAccounts(); await loadSummary();
+    },'pp-err');
+  }
+}
+
+// ── Funnel creation: pick specific triggers (not loose trigger types) ──
+let fnAvailableTriggers = [];
+let fnSelectedTriggerIds = [];  // ordered list of trigger ids chosen
+
+async function onFunnelCampaignChange() {
+  const campaignId = v('fn-campaign');
+  fnSelectedTriggerIds = [];
+  renderSelectedFunnelSteps();
+  if (!campaignId) {
+    document.getElementById('fn-trigger-picker').style.display = 'none';
+    document.getElementById('fn-no-triggers').style.display = 'none';
+    return;
+  }
+  try {
+    fnAvailableTriggers = await api(`/campaigns/${campaignId}/triggers`);
+  } catch(e) {
+    fnAvailableTriggers = [];
+  }
+  if (fnAvailableTriggers.length === 0) {
+    document.getElementById('fn-trigger-picker').style.display = 'none';
+    document.getElementById('fn-no-triggers').style.display = 'flex';
+    return;
+  }
+  document.getElementById('fn-no-triggers').style.display = 'none';
+  document.getElementById('fn-trigger-picker').style.display = 'block';
+  renderAvailableFunnelTriggers();
+}
+
+const TRIG_LABELS = {bot_start:'🚀 Bot /start',first_message:'💬 First DM',any_message:'📨 Any msg',keyword:'🔑 Keyword',channel_join:'📢 Channel join',manual:'👤 Manual',webhook:'🌐 Webhook'};
+
+function renderAvailableFunnelTriggers() {
+  document.getElementById('fn-available-triggers').innerHTML = fnAvailableTriggers.map(t => {
+    const picked = fnSelectedTriggerIds.includes(t.id);
+    const kw = t.keywords ? ` <span style="color:var(--text3)">[${esc(t.keywords)}]${t.match_mode==='all'?' (all)':''}</span>` : '';
+    return `<div class="trigger-row" style="cursor:pointer;opacity:${picked?'0.4':'1'}" onclick="${picked?'':`addFunnelTriggerStep(${t.id})`}">
+      <div class="trigger-icon">${TRIG_LABELS[t.trigger_type]?.split(' ')[0]||'—'}</div>
+      <div class="trigger-info">
+        <span class="trigger-type">${TRIG_LABELS[t.trigger_type]||t.trigger_type}</span>
+        → <span class="trigger-event">${esc(t.event_name)}</span>${kw}
+      </div>
+      ${picked?'<span class="badge badge-green">Added</span>':'<span class="badge badge-gray">+ Add</span>'}
+    </div>`;
+  }).join('');
+}
+
+function addFunnelTriggerStep(triggerId) {
+  if (fnSelectedTriggerIds.includes(triggerId)) return;
+  fnSelectedTriggerIds.push(triggerId);
+  renderAvailableFunnelTriggers();
+  renderSelectedFunnelSteps();
+}
+
+function removeFunnelTriggerStep(triggerId) {
+  fnSelectedTriggerIds = fnSelectedTriggerIds.filter(id => id !== triggerId);
+  renderAvailableFunnelTriggers();
+  renderSelectedFunnelSteps();
+}
+
+function moveFunnelStep(triggerId, dir) {
+  const i = fnSelectedTriggerIds.indexOf(triggerId);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= fnSelectedTriggerIds.length) return;
+  [fnSelectedTriggerIds[i], fnSelectedTriggerIds[j]] = [fnSelectedTriggerIds[j], fnSelectedTriggerIds[i]];
+  renderSelectedFunnelSteps();
+}
+
+function renderSelectedFunnelSteps() {
+  const countEl = document.getElementById('fn-selected-count');
+  if (countEl) countEl.textContent = fnSelectedTriggerIds.length ? `(${fnSelectedTriggerIds.length})` : '';
+  const container = document.getElementById('fn-selected-steps');
+  if (!container) return;
+  if (!fnSelectedTriggerIds.length) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px 0">No steps selected yet — click triggers above to add them in order.</div>';
+    return;
+  }
+  container.innerHTML = fnSelectedTriggerIds.map((tid, i) => {
+    const t = fnAvailableTriggers.find(x => x.id === tid);
+    if (!t) return '';
+    const kw = t.keywords ? ` <span style="color:var(--text3)">[${esc(t.keywords)}]${t.match_mode==='all'?' (all)':''}</span>` : '';
+    return `<div class="trigger-row">
+      <div style="font-size:11px;font-weight:700;color:var(--blue);width:18px">${i+1}</div>
+      <div class="trigger-info">
+        <span class="trigger-type">${TRIG_LABELS[t.trigger_type]||t.trigger_type}</span>
+        → <span class="trigger-event">${esc(t.event_name)}</span>${kw}
+      </div>
+      <button class="btn btn-xs" onclick="moveFunnelStep(${tid},-1)" ${i===0?'disabled':''}>↑</button>
+      <button class="btn btn-xs" onclick="moveFunnelStep(${tid},1)" ${i===fnSelectedTriggerIds.length-1?'disabled':''}>↓</button>
+      <button class="btn btn-danger btn-xs" onclick="removeFunnelTriggerStep(${tid})">×</button>
+    </div>`;
+  }).join('');
+}
+
+async function createFunnel() {
+  const name = v('fn-name');
+  const campaignId = v('fn-campaign');
+  if (!name) return showErr('fn-err', 'Funnel name required');
+  if (!campaignId) return showErr('fn-err', "Select a campaign — funnels track one campaign's journey");
+  if (fnSelectedTriggerIds.length < 2) return showErr('fn-err', 'Pick at least 2 triggers as steps, in order');
+  hideErr('fn-err');
+  await btnLoad('fn-btn', async () => {
+    await api('/funnels', 'POST', {
+      name, campaign_id: parseInt(campaignId),
+      trigger_ids: fnSelectedTriggerIds,
+    });
+    closeModal('modal-funnel');
+    await loadFunnels();
+  }, 'fn-err');
+}
+
+async function deleteFunnel(id) {
+  if (!confirm('Delete this funnel?')) return;
+  await api(`/funnels/${id}`, 'DELETE').catch(e => alert(e.message));
+  await loadFunnels();
+}
+
+// ── Edit an existing funnel's steps ─────────────────────────────────
+let editingFunnelId = null;
+
+async function openEditFunnelSteps(funnelId) {
+  editingFunnelId = funnelId;
+  const funnels = await api('/funnels').catch(() => []);
+  const f = funnels.find(x => x.id === funnelId);
+  if (!f) return;
+
+  setV('fn-name', f.name);
+  document.getElementById('fn-campaign').value = f.campaign_id;
+  document.getElementById('fn-campaign').disabled = true;  // can't change campaign on edit
+
+  fnAvailableTriggers = await api(`/campaigns/${f.campaign_id}/triggers`).catch(() => []);
+  fnSelectedTriggerIds = f.steps.map(s => s.trigger_id);
+
+  document.getElementById('fn-no-triggers').style.display = 'none';
+  document.getElementById('fn-trigger-picker').style.display = 'block';
+  renderAvailableFunnelTriggers();
+  renderSelectedFunnelSteps();
+
+  document.getElementById('fn-btn').textContent = 'Save Changes';
+  document.getElementById('fn-btn').onclick = saveFunnelSteps;
+  openModal('modal-funnel');
+}
+
+async function saveFunnelSteps() {
+  if (fnSelectedTriggerIds.length < 2) return showErr('fn-err', 'Keep at least 2 steps');
+  hideErr('fn-err');
+  await btnLoad('fn-btn', async () => {
+    await api(`/funnels/${editingFunnelId}/steps`, 'PATCH', { trigger_ids: fnSelectedTriggerIds });
+    closeModal('modal-funnel');
+    await loadFunnels();
+  }, 'fn-err');
+}
+
+// ── Auto-generate funnel from campaign triggers ─────────────────────
+function openAutoGenerateFunnel() {
+  hideErr('af-err');
+  document.getElementById('af-ok').style.display = 'none';
+  setV('af-campaign', '');
+  openModal('modal-auto-funnel');
+}
+
+async function runAutoGenerateFunnel() {
+  const campaignId = v('af-campaign');
+  if (!campaignId) return showErr('af-err', 'Select a campaign');
+  hideErr('af-err');
+  document.getElementById('af-ok').style.display = 'none';
+  await btnLoad('af-btn', async () => {
+    const f = await api(`/campaigns/${campaignId}/funnels/auto-generate`, 'POST');
+    const ok = document.getElementById('af-ok');
+    ok.textContent = `✅ "${f.name}" generated with ${f.steps.length} steps`;
+    ok.style.display = 'flex';
+    await loadFunnels();
+  }, 'af-err');
+}
+
+async function quickGenerateFunnelFromConfig() {
+  if (!configCampId) return;
+  try {
+    const f = await api(`/campaigns/${configCampId}/funnels/auto-generate`, 'POST');
+    await loadFunnels();
+    showToast('Funnel built', `"${f.name}" — ${f.steps.length} steps`, '🎯');
+  } catch(e) {
+    alert(e.message || 'Could not build funnel — need at least 2 active triggers on this campaign first.');
+  }
+}
+
+
+function toggleNotifs() {
+  const d=document.getElementById('notif-drawer');
+  d.classList.toggle('open');
+  if(d.classList.contains('open')) document.getElementById('notif-dot').classList.remove('show');
+}
+function renderNotifs() {
+  const list=document.getElementById('notif-list');
+  if(!notifications.length){list.innerHTML='<div class="notif-empty">No notifications</div>';return;}
+  const icons={conversion:'ni-conv',click:'ni-click',message:'ni-msg',error:'ni-err'};
+  const emojis={conversion:'✅',click:'👆',message:'💬',error:'⚠️'};
+  list.innerHTML=notifications.slice(0,30).map(n=>`
+    <div class="notif-item" onclick="handleNotifClick('${n.type}')">
+      <div class="notif-icon ${icons[n.type]||'ni-click'}">${emojis[n.type]||'🔔'}</div>
+      <div class="notif-body">
+        <div class="notif-ttl">${esc(n.title)}</div>
+        <div class="notif-txt">${esc(n.body)}</div>
+        <div class="notif-ts">${timeAgo(n.ts)}</div>
+      </div>
+    </div>`).join('');
+}
+function handleNotifClick(type) {
+  if(type==='message') switchTab('inbox');
+  else if(type==='conversion') switchTab('conversions');
+  else if(type==='click') switchTab('campaigns');
+  document.getElementById('notif-drawer').classList.remove('open');
+}
+function clearNotifs() { notifications=[]; renderNotifs(); document.getElementById('notif-dot').classList.remove('show'); }
+document.addEventListener('click',e=>{
+  const d=document.getElementById('notif-drawer');
+  const btn=document.querySelector('.notif-btn');
+  if(d?.classList.contains('open')&&!d.contains(e.target)&&!btn?.contains(e.target)) d.classList.remove('open');
+});
+
+function showToast(title,body,icon='🔔') {
+  const wrap=document.getElementById('toast-wrap');
+  const t=document.createElement('div'); t.className='toast';
+  t.innerHTML=`<div class="toast-icon">${icon}</div><div><div class="toast-ttl">${esc(title)}</div><div class="toast-body">${esc(body)}</div></div>`;
+  wrap.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300);},4000);
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
+  document.getElementById('tab-'+name)?.classList.add('active');
+  document.querySelector(`[data-tab="${name}"]`)?.classList.add('active');
+  if(name==='inbox'){loadMessages();loadUnreadCount();}
+  if(name==='funnels') loadFunnels();
+}
+
+function openModal(id){
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.style.display='flex';
+  requestAnimationFrame(()=>el.classList.add('show'));
+}
+function closeModal(id){
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.classList.remove('show');
+  setTimeout(()=>{el.style.display='none';resetModal(id);},180);
+}
+function backdropClose(e,id){if(e.target.id===id) closeModal(id);}
+function resetModal(id){
+  if(id==='modal-personal'){
+    ppStep=1;ppFlowToken=null;
+    document.getElementById('pp-1').style.display='';
+    ['pp-2','pp-3'].forEach(x=>document.getElementById(x).style.display='none');
+    document.getElementById('pp-footer').innerHTML='<button class="btn" onclick="closeModal(\'modal-personal\')">Cancel</button><button class="btn btn-primary" id="pp-btn" onclick="personalNext()">Send Code →</button>';
+    ['ps-1','ps-2','ps-3'].forEach(x=>document.getElementById(x)?.classList.remove('done','active'));
+    document.getElementById('ps-1')?.classList.add('active');
+    ['pp-phone','pp-pixel','pp-capi','pp-proxy','pp-code'].forEach(x=>setV(x,''));
+  }
+  if(id==='modal-funnel'){
+    setV('fn-name','');
+    setV('fn-campaign','');
+    document.getElementById('fn-campaign').disabled = false;
+    fnAvailableTriggers = [];
+    fnSelectedTriggerIds = [];
+    editingFunnelId = null;
+    document.getElementById('fn-trigger-picker').style.display = 'none';
+    document.getElementById('fn-no-triggers').style.display = 'none';
+    const fnBtn = document.getElementById('fn-btn');
+    fnBtn.textContent = 'Create Funnel';
+    fnBtn.onclick = createFunnel;
+    hideErr('fn-err');
+  }
+  if(id==='modal-token'){document.getElementById('tok-result').style.display='none';hideErr('tok-err');}
+  if(id==='modal-camp-config'){document.getElementById('cc-add-trigger').style.display='none';}
+  document.querySelectorAll(`#${id} .alert-error`).forEach(e=>e.style.display='none');
+  document.querySelectorAll(`#${id} .alert-success`).forEach(e=>e.style.display='none');
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape') document.querySelectorAll('.modal-backdrop.show').forEach(m=>closeModal(m.id));});
+
+function v(id){return document.getElementById(id)?.value?.trim()||'';}
+function setV(id,val){const el=document.getElementById(id);if(el) el.value=val;}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function showErr(id,msg){const el=document.getElementById(id);if(el){el.textContent=msg;el.style.display='flex';}}
+function hideErr(id){const el=document.getElementById(id);if(el) el.style.display='none';}
+function copyText(text,btn){
+  navigator.clipboard.writeText(text).then(()=>{
+    const orig=btn.textContent;btn.textContent='✓';btn.classList.add('copied');
+    setTimeout(()=>{btn.textContent=orig;btn.classList.remove('copied');},1600);
+  });
+}
+function timeAgo(iso){
+  if(!iso) return '—';
+  const s=Math.floor((Date.now()-new Date(iso))/1000);
+  if(s<60) return s+'s ago';if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';
+}
+async function btnLoad(btnId,fn,errId){
+  const btn=document.getElementById(btnId);const orig=btn?.textContent;
+  if(btn){btn.disabled=true;btn.innerHTML='<div class="spinner"></div>';}
+  try{await fn();}catch(e){if(errId) showErr(errId,e.message||'Something went wrong');}
+  finally{if(btn){btn.disabled=false;btn.textContent=orig;}}
+}
+</script>
+</body>
+</html>
