@@ -3,7 +3,7 @@ service_a/main.py — FastAPI Web Router + WebSocket hub
 Full production API: click tracking, auth, accounts, campaigns,
 conversions, messages, funnels, real-time WebSocket notifications.
 """
-import hashlib, hmac, json, logging, os, secrets, string, sys, urllib.parse
+import asyncio, hashlib, hmac, json, logging, os, secrets, string, sys, urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from contextlib import asynccontextmanager
@@ -22,12 +22,14 @@ from shared.config import get_settings, validate_or_exit
 from shared.logging_config import setup_logging
 from shared.database import get_db, init_db, AsyncSessionLocal
 from shared.models import (
-    AccessToken, AccountType, Campaign, ConversionLog, ConversionStatus,
+    AccessToken, AccountType, Campaign, ClickDestinationType, ConversionLog, ConversionStatus,
     ConversionTrigger, DashboardUser, EventType, Funnel, FunnelStep,
     Message, MessageDirection, TelegramAccount, TriggerType, UserSession, WebhookToken
 )
-from shared.security import hash_password, verify_password
+from shared.security import hash_password, verify_password, sign_token, verify_token, TokenError, mask_secret
 from service_a.websocket_manager import ws_manager
+from shared.tracking import build_fbc, normalize_fbc_or_build, normalize_fbp, parse_user_agent, get_client_ip, anonymize_ip
+from shared.meta import build_user_data as build_meta_user_data, build_custom_data, new_event_id as new_meta_event_id, dedup_key as meta_dedup_key
 
 setup_logging("service_a")
 validate_or_exit("dashboard")
@@ -35,6 +37,8 @@ validate_or_exit("dashboard")
 logger = logging.getLogger(__name__)
 settings = get_settings()
 redis_client: aioredis.Redis | None = None
+_memory_sessions: dict[str, str] = {}
+_memory_session_expiry: dict[str, float] = {}
 
 # ─────────────────────────────────────────────────────────────────────
 # Session tokens
@@ -53,18 +57,47 @@ SESSION_TTL_SECONDS = 7 * 24 * 3600  # 7 days
 
 
 async def _create_session(telegram_id: int) -> str:
+    import time as _time
     token = secrets.token_urlsafe(32)
-    await redis_client.setex(f"session:{token}", SESSION_TTL_SECONDS, str(telegram_id))
+    try:
+        if redis_client:
+            await redis_client.setex(f"session:{token}", SESSION_TTL_SECONDS, str(telegram_id))
+            return token
+    except Exception:
+        pass
+    # Fallback to in-memory (dev without Redis)
+    _memory_sessions[token] = str(telegram_id)
+    _memory_session_expiry[token] = _time.time() + SESSION_TTL_SECONDS
     return token
 
 
 async def _resolve_session(token: str) -> int | None:
-    raw = await redis_client.get(f"session:{token}")
-    if raw is None:
-        return None
-    # Sliding expiry — active users stay logged in
-    await redis_client.expire(f"session:{token}", SESSION_TTL_SECONDS)
-    return int(raw)
+    import time as _time
+    try:
+        if redis_client:
+            raw = await redis_client.get(f"session:{token}")
+            if raw is not None:
+                await redis_client.expire(f"session:{token}", SESSION_TTL_SECONDS)
+                return int(raw)
+            # also check memory fallback
+    except Exception:
+        pass
+    # Memory fallback
+    exp = _memory_session_expiry.get(token)
+    if exp and exp > _time.time():
+        # sliding expiry
+        _memory_session_expiry[token] = _time.time() + SESSION_TTL_SECONDS
+        return int(_memory_sessions[token])
+    elif exp:
+        _memory_sessions.pop(token, None)
+        _memory_session_expiry.pop(token, None)
+    # also try memory even if redis was not tried
+    if token in _memory_sessions:
+        exp2 = _memory_session_expiry.get(token)
+        if exp2 and exp2 > _time.time():
+            _memory_session_expiry[token] = _time.time() + SESSION_TTL_SECONDS
+            return int(_memory_sessions[token])
+    return None
 DASHBOARD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard")
 
 
@@ -293,75 +326,178 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
 @app.get("/t/{slug}")
 async def capture_click(slug: str, request: Request,
                          fbclid: str | None = Query(default=None),
+                         fbc: str | None = Query(default=None),
+                         fbp: str | None = Query(default=None),
+                         campaign: str | None = Query(default=None),
+                         campaign_id: str | None = Query(default=None),
+                         adset: str | None = Query(default=None),
+                         adset_id: str | None = Query(default=None),
+                         ad: str | None = Query(default=None),
+                         ad_id: str | None = Query(default=None),
+                         creative: str | None = Query(default=None),
+                         placement: str | None = Query(default=None),
+                         sub1: str | None = Query(default=None),
+                         sub2: str | None = Query(default=None),
+                         sub3: str | None = Query(default=None),
+                         sub4: str | None = Query(default=None),
+                         sub5: str | None = Query(default=None),
+                         sub6: str | None = Query(default=None),
+                         sub7: str | None = Query(default=None),
+                         sub8: str | None = Query(default=None),
+                         sub9: str | None = Query(default=None),
                          db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Campaign).where(Campaign.slug == slug, Campaign.is_active == True)
-    )
-    campaign = result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(404, "Campaign not found")
+    # Try campaign first, then tracking_link
+    campaign_obj = None
+    tracking_link = None
+    result = await db.execute(select(Campaign).where(Campaign.slug == slug, Campaign.is_active == True))
+    campaign_obj = result.scalar_one_or_none()
+    if not campaign_obj:
+        from shared.models import TrackingLink
+        r2 = await db.execute(select(TrackingLink).where(TrackingLink.slug == slug, TrackingLink.is_active == True))
+        tracking_link = r2.scalar_one_or_none()
+        if not tracking_link:
+            raise HTTPException(404, "Campaign or tracking link not found")
+        if tracking_link.campaign_id:
+            campaign_obj = await db.get(Campaign, tracking_link.campaign_id)
 
-    acct = await db.get(TelegramAccount, campaign.account_id)
-    client_ip = request.headers.get("X-Forwarded-For", request.client.host).split(",")[0].strip()
-    user_agent = request.headers.get("User-Agent", "")
-    target = campaign.target_telegram_username.lstrip("@")
+    if tracking_link and tracking_link.destination:
+        dest = tracking_link.destination
+        if "t.me/" in dest:
+            target = dest.split("t.me/")[-1].split("?")[0].split("/")[0].lstrip("@")
+        else:
+            target = dest.lstrip("@")
+        owner_id = tracking_link.user_id
+        campaign_id_val = tracking_link.campaign_id or (campaign_obj.id if campaign_obj else None)
+        account_id_val = campaign_obj.account_id if campaign_obj else None
+        # if link has campaign, keep campaign_obj for later but target is link's destination
+    elif campaign_obj:
+        target = campaign_obj.target_telegram_username.lstrip("@")
+        owner_id = campaign_obj.user_id
+        campaign_id_val = campaign_obj.id
+        account_id_val = campaign_obj.account_id
+    else:
+        raise HTTPException(404, "Not found")
 
-    # ── Link-preview crawler detection ──────────────────────────────
-    # When this URL is shared in Telegram/WhatsApp/etc, their servers
-    # fetch it to build a preview card. That is NOT a real ad click.
-    # We still redirect (so the preview shows something sensible) but
-    # we do NOT count a click, write a Redis key, or fire a notification.
-    if _is_crawler(user_agent):
+    acct = await db.get(TelegramAccount, account_id_val) if account_id_val else None
+    raw_headers = dict(request.headers)
+    client_host = request.client.host if request.client else "0.0.0.0"
+    client_ip = get_client_ip(raw_headers, client_host, trust_hops=settings.TRUST_PROXY_HOPS)
+    user_agent = request.headers.get("User-Agent", "") or ""
+    referrer = request.headers.get("Referer") or request.headers.get("referer")
+    landing_page = str(request.url)
+    language = request.headers.get("Accept-Language", "")[:32] if request.headers.get("Accept-Language") else None
+
+    if _is_crawler(user_agent) and settings.FILTER_CRAWLERS:
         return RedirectResponse(url=f"https://t.me/{target}", status_code=302)
 
-    # ── Rate limiting per IP ─────────────────────────────────────────
-    # Protects against click-fraud / abuse — a script hammering a tracking
-    # URL would otherwise inflate click counts and burn through the Redis
-    # TTL window with fake entries. Real users never hit this; a single
-    # person clicking an ad a few times (double-click, retry) is fine.
     rl_key = f"ratelimit:click:{client_ip}"
     try:
         current = await redis_client.incr(rl_key)
         if current == 1:
             await redis_client.expire(rl_key, settings.CLICK_RATE_LIMIT_WINDOW_SECONDS)
         if current > settings.CLICK_RATE_LIMIT_MAX:
-            logger.warning("Rate limit exceeded for IP %s on campaign %s", client_ip, slug)
-            # Still redirect (don't reveal rate limiting to the client / give
-            # away tracking infrastructure details) but skip counting.
+            logger.warning("Rate limit exceeded for IP %s on slug %s", client_ip, slug)
             return RedirectResponse(url=f"https://t.me/{target}", status_code=302)
     except Exception:
-        pass  # Redis hiccup shouldn't block real clicks
+        pass
 
-    short_key = _gen_key(8)
-    payload = {
-        "fbclid": fbclid or "",
-        "campaign_id": campaign.id,
-        "account_id": campaign.account_id,
-        "user_id": campaign.user_id,
-        "event_type": campaign.event_type,
-        "meta_pixel_id": acct.meta_pixel_id if acct else "",
-        "meta_capi_token": acct.meta_capi_token if acct else "",
-        "target_username": campaign.target_telegram_username,
-        "client_ip": client_ip,
-        "user_agent": user_agent,
-        "clicked_at": datetime.now(timezone.utc).isoformat(),
+    cookies = dict(request.cookies) if hasattr(request, "cookies") else {}
+    effective_fbp = fbp or cookies.get("_fbp") or request.query_params.get("fbp")
+    effective_fbc = normalize_fbc_or_build(fbc, fbclid)
+    effective_fbp_norm = normalize_fbp(effective_fbp)
+
+    params = {
+        "fbclid": fbclid, "fbc": effective_fbc, "fbp": effective_fbp_norm,
+        "campaign": campaign, "campaign_id": campaign_id, "adset": adset, "adset_id": adset_id,
+        "ad": ad, "ad_id": ad_id, "creative": creative, "placement": placement,
+        "sub1": sub1, "sub2": sub2, "sub3": sub3, "sub4": sub4, "sub5": sub5,
+        "sub6": sub6, "sub7": sub7, "sub8": sub8, "sub9": sub9,
     }
-    await redis_client.setex(f"click:{short_key}", settings.REDIS_TTL_HOURS * 3600, json.dumps(payload))
-    await db.execute(update(Campaign).where(Campaign.id == campaign.id)
-                     .values(total_clicks=Campaign.total_clicks + 1))
-    await db.commit()
 
-    # Notify dashboard of new click
-    await redis_client.publish("tg_notifications", json.dumps({
-        "target_user_id": campaign.user_id,
-        "type": "click",
-        "title": "New Click",
-        "body": f"{campaign.name} — {client_ip}",
-        "data": {"campaign_id": campaign.id, "campaign_name": campaign.name},
-        "ts": datetime.now(timezone.utc).isoformat(),
-    }))
+    from shared.tracking import create_click as tracking_create_click
+    from shared.models import TrackingLink as TL
+    short_key = _gen_key(10)
+    try:
+        correlation_token = sign_token({"cid": short_key, "purp": "click"}, settings.SECRET_KEY, settings.CORRELATION_TOKEN_TTL_SECONDS)
+    except Exception:
+        correlation_token = short_key
 
-    return RedirectResponse(url=f"https://t.me/{target}?start={short_key}", status_code=302)
+    request_data = {
+        "ip": client_ip, "user_agent": user_agent, "referrer": referrer,
+        "landing_page": landing_page, "language": language,
+    }
+
+    try:
+        click = await tracking_create_click(
+            click_id=short_key,
+            campaign_id=campaign_id_val,
+            tracking_link_id=tracking_link.id if tracking_link else None,
+            domain_id=tracking_link.domain_id if tracking_link else None,
+            params=params,
+            request_data=request_data,
+            event_source_url=landing_page,
+        )
+        try:
+            await redis_client.setex(f"correlation:{correlation_token}", settings.CORRELATION_TOKEN_TTL_SECONDS, json.dumps({"click_id": click.id, "click_public_id": short_key, "campaign_id": campaign_id_val}))
+        except Exception:
+            pass
+        event_id_for_pixel = click.event_id
+    except Exception as e:
+        logger.exception("Failed to persist click: %s", e)
+        payload = {
+            "fbclid": fbclid or "", "fbc": effective_fbc or "", "fbp": effective_fbp_norm or "",
+            "campaign_id": campaign_id_val, "account_id": account_id_val,
+            "user_id": owner_id,
+            "event_type": campaign_obj.event_type if campaign_obj else "Lead",
+            "meta_pixel_id": acct.meta_pixel_id if acct else "",
+            "meta_capi_token": acct.meta_capi_token if acct else "",
+            "target_username": target,
+            "client_ip": client_ip, "user_agent": user_agent,
+            "clicked_at": datetime.now(timezone.utc).isoformat(),
+            "subs": {f"sub{i}": params.get(f"sub{i}") for i in range(1,10)},
+        }
+        try:
+            if redis_client:
+                await redis_client.setex(f"click:{short_key}", settings.REDIS_TTL_HOURS * 3600, json.dumps(payload))
+        except Exception:
+            pass
+        if campaign_obj:
+            await db.execute(update(Campaign).where(Campaign.id == campaign_obj.id).values(total_clicks=Campaign.total_clicks + 1))
+            await db.commit()
+        event_id_for_pixel = str(payload.get("event_id", short_key))
+        correlation_token = short_key
+
+    if tracking_link:
+        try:
+            await db.execute(update(TL).where(TL.id == tracking_link.id).values(total_clicks=TL.total_clicks + 1))
+            await db.commit()
+        except Exception:
+            pass
+    elif campaign_obj:
+        try:
+            await db.execute(update(Campaign).where(Campaign.id == campaign_obj.id).values(total_clicks=Campaign.total_clicks + 1))
+            await db.commit()
+        except Exception:
+            pass
+
+    try:
+        if redis_client:
+            await redis_client.publish("tg_notifications", json.dumps({
+                "target_user_id": owner_id,
+                "type": "click",
+                "title": "New Click",
+                "body": f"{(campaign_obj.name if campaign_obj else slug)} — {client_ip}",
+                "data": {"campaign_id": campaign_id_val, "campaign_name": campaign_obj.name if campaign_obj else slug},
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }))
+    except Exception:
+        pass
+
+    token_for_tg = correlation_token if len(correlation_token) < 64 else short_key
+    if len(token_for_tg) > 64:
+        token_for_tg = short_key
+
+    return RedirectResponse(url=f"https://t.me/{target}?start={token_for_tg}", status_code=302)
 
 
 # ═══════════════════════════════════════════════════════
@@ -618,7 +754,13 @@ async def logout(authorization: str | None = Header(default=None)):
     if authorization and authorization.startswith("Bearer "):
         token = authorization[len("Bearer "):].strip()
         if token:
-            await redis_client.delete(f"session:{token}")
+            try:
+                if redis_client:
+                    await redis_client.delete(f"session:{token}")
+            except Exception:
+                pass
+            _memory_sessions.pop(token, None)
+            _memory_session_expiry.pop(token, None)
     return {"ok": True}
 
 
@@ -1183,7 +1325,7 @@ async def create_funnel(body: dict, user: DashboardUser = Depends(require_user),
         db.add(FunnelStep(funnel_id=funnel.id, trigger_id=tid, step_order=i + 1,
                           label=labels.get(str(tid))))
     await db.commit()
-    return {"ok": True, "funnel_id": funnel.id}
+    return {"ok": True, "id": funnel.id, "funnel_id": funnel.id}
 
 
 @app.patch("/api/funnels/{funnel_id}/steps")
@@ -1883,8 +2025,8 @@ async def add_channel(body: dict, user: DashboardUser = Depends(require_user),
         mon_acct = await db.get(TelegramAccount, int(monitor_id))
         if not mon_acct or mon_acct.user_id != user.telegram_id:
             raise HTTPException(404, "Monitor account not found")
-        if mon_acct.account_type != AccountType.PERSONAL:
-            raise HTTPException(400, "Monitor account must be a personal account")
+        if mon_acct.account_type not in (AccountType.PERSONAL, AccountType.BOT):
+            raise HTTPException(400, "Monitor account must be a BOT or PERSONAL account")
     db.add(TelegramAccount(
         user_id=user.telegram_id,
         account_type=AccountType.CHANNEL,
@@ -1924,3 +2066,1003 @@ async def list_sessions(campaign_id: int, user: DashboardUser = Depends(require_
              "first_seen_at": s.first_seen_at.isoformat(),
              "last_seen_at": s.last_seen_at.isoformat()}
             for s in result.scalars().all()]
+
+# ═══════════════════════════════════════════════════════
+# V5 EXTENSIONS — Tracking domains / links / clicks / identities / events
+# ═══════════════════════════════════════════════════════
+
+# ── Tracking aliases already handled in replaced capture_click ──
+# Additional alias routes
+
+@app.get("/c/{code}")
+async def capture_click_alias(code: str, request: Request, db: AsyncSession = Depends(get_db)):
+    # Extract query params manually to avoid FastAPI Query injection issue when calling capture_click directly
+    qp = request.query_params
+    return await capture_click(
+        code, request,
+        fbclid=qp.get("fbclid"),
+        fbc=qp.get("fbc"),
+        fbp=qp.get("fbp"),
+        campaign=qp.get("campaign"),
+        campaign_id=qp.get("campaign_id"),
+        adset=qp.get("adset"),
+        adset_id=qp.get("adset_id"),
+        ad=qp.get("ad"),
+        ad_id=qp.get("ad_id"),
+        creative=qp.get("creative"),
+        placement=qp.get("placement"),
+        sub1=qp.get("sub1"),
+        sub2=qp.get("sub2"),
+        sub3=qp.get("sub3"),
+        sub4=qp.get("sub4"),
+        sub5=qp.get("sub5"),
+        sub6=qp.get("sub6"),
+        sub7=qp.get("sub7"),
+        sub8=qp.get("sub8"),
+        sub9=qp.get("sub9"),
+        db=db
+    )
+
+@app.get("/b/{token}")
+async def bridge_redirect(token: str, request: Request, db: AsyncSession = Depends(get_db)):
+    from shared.models import Click
+    click_public_id = token
+    payload = None
+    try:
+        data = verify_token(token, settings.SECRET_KEY, purpose="click")
+        click_public_id = data.get("cid") or token
+    except TokenError:
+        pass
+    try:
+        raw = await redis_client.get(f"click:{click_public_id}")
+        if raw:
+            payload = json.loads(raw)
+    except Exception:
+        pass
+    if not payload:
+        r = await db.execute(select(Click).where(Click.click_id == click_public_id))
+        click = r.scalar_one_or_none()
+        if not click:
+            raise HTTPException(404, "Link expired or not found")
+        payload = {"campaign_id": click.campaign_id, "click_id": click.id}
+        if click.campaign_id:
+            camp = await db.get(Campaign, click.campaign_id)
+            if camp:
+                payload["target_username"] = camp.target_telegram_username
+    target = payload.get("target_username", "").lstrip("@") if payload.get("target_username") else ""
+    if not target:
+        cid = payload.get("campaign_id")
+        if cid:
+            camp = await db.get(Campaign, cid)
+            if camp:
+                target = camp.target_telegram_username.lstrip("@")
+    if not target:
+        # try tracking_link
+        from shared.models import TrackingLink
+        if payload.get("tracking_link_id"):
+            link = await db.get(TrackingLink, payload["tracking_link_id"])
+            if link and "t.me/" in link.destination:
+                target = link.destination.split("t.me/")[-1].split("?")[0].split("/")[0].lstrip("@")
+    if not target:
+        raise HTTPException(404, "Destination not found")
+    return RedirectResponse(url=f"https://t.me/{target}?start={click_public_id}", status_code=302)
+
+@app.get("/l/{slug}")
+async def landing_page(slug: str, request: Request, db: AsyncSession = Depends(get_db)):
+    from fastapi.responses import HTMLResponse
+    from shared.models import TrackingLink, Click, MetaPixel
+    camp = None
+    link = None
+    r = await db.execute(select(Campaign).where(Campaign.slug == slug, Campaign.is_active == True))
+    camp = r.scalar_one_or_none()
+    if not camp:
+        r2 = await db.execute(select(TrackingLink).where(TrackingLink.slug == slug, TrackingLink.is_active == True))
+        link = r2.scalar_one_or_none()
+        if not link:
+            raise HTTPException(404, "Not found")
+        if link.campaign_id:
+            camp = await db.get(Campaign, link.campaign_id)
+    pixel_id = None
+    if camp:
+        acct = await db.get(TelegramAccount, camp.account_id) if camp.account_id else None
+        pixel_id = acct.meta_pixel_id if acct and acct.meta_pixel_id else None
+        if not pixel_id:
+            rp = await db.execute(select(MetaPixel).where(MetaPixel.user_id == camp.user_id, MetaPixel.is_active == True).limit(1))
+            mp = rp.scalar_one_or_none()
+            if mp:
+                pixel_id = mp.pixel_id
+    elif link:
+        rp = await db.execute(select(MetaPixel).where(MetaPixel.user_id == link.user_id, MetaPixel.is_active == True).limit(1))
+        mp = rp.scalar_one_or_none()
+        if mp:
+            pixel_id = mp.pixel_id
+    query = dict(request.query_params)
+    fbclid = query.get("fbclid")
+    fbc = query.get("fbc")
+    fbp = query.get("fbp") or request.cookies.get("_fbp")
+    short = _gen_key(10)
+    click_event_id = short
+    try:
+        from shared.tracking import create_click as tc
+        params = {k: query.get(k) for k in ["fbclid","fbc","fbp","campaign","adset","ad","creative","placement","sub1","sub2","sub3","sub4","sub5","sub6","sub7","sub8","sub9"]}
+        params["fbclid"] = fbclid
+        params["fbc"] = fbc
+        params["fbp"] = fbp
+        rd = {"ip": request.client.host if request.client else "", "user_agent": request.headers.get("User-Agent",""), "referrer": request.headers.get("Referer"), "landing_page": str(request.url)}
+        if camp or link:
+            click = await tc(click_id=short, campaign_id=camp.id if camp else (link.campaign_id if link else None), tracking_link_id=link.id if link else None, domain_id=link.domain_id if link else None, params=params, request_data=rd, event_source_url=str(request.url))
+            click_event_id = click.event_id
+    except Exception as e:
+        logger.warning("landing click persist failed: %s", e)
+    target = ""
+    if camp:
+        target = camp.target_telegram_username
+    elif link:
+        target = link.destination
+    if target.startswith("@"):
+        target = target[1:]
+    if "t.me/" in target:
+        target = target.split("t.me/")[-1].split("?")[0].split("/")[0]
+    target = target.lstrip("@")
+    tg_link = f"https://t.me/{target}?start={short}" if target else "#"
+    pixel_block = ""
+    if pixel_id and settings.ENABLE_BROWSER_PIXEL:
+        pixel_js = f"""!function(f,b,e,v,n,t,s){{if(f.fbq)return;n=f.fbq=function(){{n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)}};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init', '{pixel_id}');fbq('track', 'PageView', {{}}, {{eventID: '{click_event_id}'}});"""
+        pixel_block = f'<script>{pixel_js}</script><noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id={pixel_id}&ev=PageView&noscript=1" /></noscript>'
+    html = f"""<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Continue to Telegram</title>{pixel_block}</head><body style="font-family:system-ui;background:#0a0a0f;color:#f0f0ff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0"><div style="text-align:center;max-width:480px;padding:24px"><h2 style="margin:0 0 12px">Continue to Telegram</h2><p style="color:#8888aa;margin:0 0 20px">You clicked an ad — tap below to open Telegram.</p><a href="{tg_link}" style="display:inline-block;background:#4f8ef7;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600">Open Telegram</a><p style="margin-top:16px;font-size:12px;color:#555570;word-break:break-all">{tg_link}</p></div></body></html>"""
+    return HTMLResponse(html)
+
+# ── Tracking domains ──
+
+@app.get("/api/tracking-domains")
+async def list_tracking_domains(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TrackingDomain
+    r = await db.execute(select(TrackingDomain).where(TrackingDomain.user_id == user.telegram_id).order_by(TrackingDomain.created_at.desc()))
+    return [{"id": d.id, "domain": d.domain, "is_active": d.is_active, "is_verified": d.is_verified, "created_at": d.created_at.isoformat()} for d in r.scalars().all()]
+
+@app.post("/api/tracking-domains", status_code=201)
+async def create_tracking_domain(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TrackingDomain
+    domain = (body.get("domain") or "").strip().lower()
+    if not domain or "." not in domain:
+        raise HTTPException(400, "Valid domain required (e.g. track.example.com)")
+    # basic SSRF/validation: no private IPs, no localhost
+    if domain in ("localhost", "127.0.0.1") or domain.startswith("10.") or domain.startswith("192.168."):
+        raise HTTPException(400, "Private/local domains not allowed")
+    existing = await db.execute(select(TrackingDomain).where(TrackingDomain.user_id == user.telegram_id, TrackingDomain.domain == domain))
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "Domain already exists")
+    d = TrackingDomain(user_id=user.telegram_id, domain=domain, is_active=True)
+    db.add(d)
+    await db.commit()
+    await db.refresh(d)
+    return {"ok": True, "id": d.id, "domain": d.domain}
+
+@app.patch("/api/tracking-domains/{domain_id}")
+async def update_tracking_domain(domain_id: int, body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TrackingDomain
+    d = await db.get(TrackingDomain, domain_id)
+    if not d or d.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    if "is_active" in body:
+        d.is_active = bool(body["is_active"])
+    if "is_verified" in body and user.is_admin:
+        d.is_verified = bool(body["is_verified"])
+    await db.commit()
+    return {"ok": True}
+
+@app.delete("/api/tracking-domains/{domain_id}")
+async def delete_tracking_domain(domain_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TrackingDomain
+    d = await db.get(TrackingDomain, domain_id)
+    if not d or d.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    await db.delete(d)
+    await db.commit()
+    return {"ok": True}
+
+# ── Tracking links ──
+
+@app.get("/api/tracking-links")
+async def list_tracking_links(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db), campaign_id: int | None = Query(default=None), domain_id: int | None = Query(default=None)):
+    from shared.models import TrackingLink
+    q = select(TrackingLink).where(TrackingLink.user_id == user.telegram_id)
+    if campaign_id:
+        q = q.where(TrackingLink.campaign_id == campaign_id)
+    if domain_id:
+        q = q.where(TrackingLink.domain_id == domain_id)
+    q = q.order_by(TrackingLink.created_at.desc()).limit(200)
+    r = await db.execute(q)
+    links = r.scalars().all()
+    # enrich with domain
+    out = []
+    for l in links:
+        domain_str = ""
+        if l.domain_id:
+            from shared.models import TrackingDomain
+            dom = await db.get(TrackingDomain, l.domain_id)
+            if dom:
+                domain_str = dom.domain
+        url = f"https://{domain_str}/c/{l.slug}" if domain_str else f"{settings.BASE_URL}/c/{l.slug}"
+        out.append({"id": l.id, "slug": l.slug, "campaign_id": l.campaign_id, "domain_id": l.domain_id, "domain": domain_str, "destination": l.destination, "destination_type": l.destination_type, "is_active": l.is_active, "total_clicks": l.total_clicks, "label": l.label, "url": url, "created_at": l.created_at.isoformat()})
+    return out
+
+@app.post("/api/tracking-links", status_code=201)
+async def create_tracking_link(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TrackingLink, TrackingDomain
+    destination = (body.get("destination") or "").strip()
+    if not destination:
+        raise HTTPException(400, "destination required (e.g. @mybot or https://t.me/mybot or https://t.me/mybot?start=...)")
+    dest_type = body.get("destination_type") or "bot"
+    try:
+        dest_type_enum = ClickDestinationType(dest_type)
+    except ValueError:
+        dest_type_enum = ClickDestinationType.bot
+    campaign_id = body.get("campaign_id")
+    if campaign_id:
+        camp = await db.get(Campaign, campaign_id)
+        if not camp or camp.user_id != user.telegram_id:
+            raise HTTPException(404, "Campaign not found")
+    domain_id = body.get("domain_id")
+    if domain_id:
+        dom = await db.get(TrackingDomain, domain_id)
+        if not dom or dom.user_id != user.telegram_id:
+            raise HTTPException(404, "Domain not found")
+    slug = (body.get("slug") or "").strip() or _gen_key(8)
+    # ensure unique
+    while (await db.execute(select(TrackingLink).where(TrackingLink.slug == slug))).scalar_one_or_none():
+        slug = _gen_key(8)
+    link = TrackingLink(user_id=user.telegram_id, campaign_id=campaign_id, domain_id=domain_id, slug=slug, destination=destination, destination_type=dest_type_enum, label=body.get("label"), is_active=True)
+    db.add(link)
+    await db.commit()
+    await db.refresh(link)
+    domain_str = ""
+    if domain_id:
+        dom = await db.get(TrackingDomain, domain_id)
+        if dom:
+            domain_str = dom.domain
+    url = f"https://{domain_str}/c/{slug}" if domain_str else f"{settings.BASE_URL}/c/{slug}"
+    return {"ok": True, "id": link.id, "slug": slug, "url": url}
+
+@app.patch("/api/tracking-links/{link_id}")
+async def update_tracking_link(link_id: int, body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TrackingLink
+    link = await db.get(TrackingLink, link_id)
+    if not link or link.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    if "destination" in body:
+        link.destination = body["destination"]
+    if "is_active" in body:
+        link.is_active = bool(body["is_active"])
+    if "label" in body:
+        link.label = body["label"]
+    if "destination_type" in body:
+        try:
+            link.destination_type = ClickDestinationType(body["destination_type"])
+        except ValueError:
+            pass
+    await db.commit()
+    return {"ok": True}
+
+@app.delete("/api/tracking-links/{link_id}")
+async def delete_tracking_link(link_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TrackingLink
+    link = await db.get(TrackingLink, link_id)
+    if not link or link.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    await db.delete(link)
+    await db.commit()
+    return {"ok": True}
+
+# ── Clicks explorer ──
+
+@app.get("/api/clicks")
+async def list_clicks(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db), campaign_id: int | None = Query(default=None), tracking_link_id: int | None = Query(default=None), limit: int = Query(default=50, le=200), offset: int = Query(default=0), country: str | None = Query(default=None), device_type: str | None = Query(default=None)):
+    from shared.models import Click
+    # clicks are owner-scoped via campaign or tracking_link ownership. For simplicity, filter by user's campaigns/links.
+    # Get user's campaign ids
+    camp_ids_r = await db.execute(select(Campaign.id).where(Campaign.user_id == user.telegram_id))
+    camp_ids = [row[0] for row in camp_ids_r.all()]
+    from shared.models import TrackingLink
+    link_ids_r = await db.execute(select(TrackingLink.id).where(TrackingLink.user_id == user.telegram_id))
+    link_ids = [row[0] for row in link_ids_r.all()]
+    q = select(Click).where((Click.campaign_id.in_(camp_ids) | Click.tracking_link_id.in_(link_ids)) if (camp_ids or link_ids) else False)
+    if campaign_id:
+        q = q.where(Click.campaign_id == campaign_id)
+    if tracking_link_id:
+        q = q.where(Click.tracking_link_id == tracking_link_id)
+    if country:
+        q = q.where(Click.country == country.upper())
+    if device_type:
+        q = q.where(Click.device_type == device_type)
+    q = q.order_by(Click.created_at.desc()).limit(limit).offset(offset)
+    r = await db.execute(q)
+    clicks = r.scalars().all()
+    return [{"id": c.id, "click_id": c.click_id, "campaign_id": c.campaign_id, "tracking_link_id": c.tracking_link_id, "fbclid": c.fbclid[:12]+"…" if c.fbclid else None, "fbc": bool(c.fbc), "fbp": bool(c.fbp), "campaign_name": c.campaign_name, "adset": c.adset, "ad": c.ad, "sub1": c.sub1, "sub2": c.sub2, "ip": c.ip, "country": c.country, "city": c.city, "browser": c.browser, "os": c.os, "device_type": c.device_type, "referrer": c.referrer, "landing_page": c.landing_page, "created_at": c.created_at.isoformat()} for c in clicks]
+
+@app.get("/api/clicks/{click_id}")
+async def get_click(click_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Click
+    c = await db.get(Click, click_id)
+    if not c:
+        raise HTTPException(404, "Not found")
+    # verify ownership
+    allowed = False
+    if c.campaign_id:
+        camp = await db.get(Campaign, c.campaign_id)
+        if camp and camp.user_id == user.telegram_id:
+            allowed = True
+    if c.tracking_link_id and not allowed:
+        from shared.models import TrackingLink
+        link = await db.get(TrackingLink, c.tracking_link_id)
+        if link and link.user_id == user.telegram_id:
+            allowed = True
+    if not allowed and not user.is_admin:
+        raise HTTPException(404, "Not found")
+    return {"id": c.id, "click_id": c.click_id, "campaign_id": c.campaign_id, "tracking_link_id": c.tracking_link_id, "fbclid": c.fbclid, "fbc": c.fbc, "fbp": c.fbp, "campaign_name": c.campaign_name, "adset": c.adset, "adset_id": c.adset_id, "ad": c.ad, "ad_id": c.ad_id, "creative": c.creative, "placement": c.placement, "subs": {f"sub{i}": getattr(c, f"sub{i}") for i in range(1,10)}, "ip": c.ip, "country": c.country, "region": c.region, "city": c.city, "timezone": c.timezone, "language": c.language, "user_agent": c.user_agent, "browser": c.browser, "browser_version": c.browser_version, "os": c.os, "device_type": c.device_type, "referrer": c.referrer, "landing_page": c.landing_page, "event_id": c.event_id, "created_at": c.created_at.isoformat(), "expires_at": c.expires_at.isoformat() if c.expires_at else None}
+
+# ── Telegram identities / CRM ──
+
+@app.get("/api/identities")
+async def list_identities(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db), search: str | None = Query(default=None), tag_id: int | None = Query(default=None), limit: int = Query(default=50, le=200), offset: int = Query(default=0)):
+    from shared.models import TelegramIdentity, ContactTag
+    q = select(TelegramIdentity).where(TelegramIdentity.owner_user_id == user.telegram_id)
+    if search:
+        like = f"%{search.lower()}%"
+        q = q.where((func.lower(TelegramIdentity.username).like(like)) | (func.lower(TelegramIdentity.first_name).like(like)) | (func.lower(TelegramIdentity.last_name).like(like)))
+    if tag_id:
+        # join contact_tags
+        q = q.join(ContactTag, ContactTag.identity_id == TelegramIdentity.id).where(ContactTag.tag_id == tag_id)
+    q = q.order_by(TelegramIdentity.last_seen.desc()).limit(limit).offset(offset)
+    r = await db.execute(q)
+    ids = r.scalars().all()
+    return [{"id": i.id, "telegram_user_id": i.telegram_user_id, "username": i.username, "first_name": i.first_name, "last_name": i.last_name, "phone": bool(i.phone), "country": i.country, "first_seen": i.first_seen.isoformat(), "last_seen": i.last_seen.isoformat(), "source": i.source} for i in ids]
+
+@app.get("/api/identities/{identity_id}")
+async def get_identity(identity_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TelegramIdentity, ContactTag, Tag, TelegramEvent, Click
+    ident = await db.get(TelegramIdentity, identity_id)
+    if not ident or ident.owner_user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    # tags
+    tags_r = await db.execute(select(Tag).join(ContactTag, ContactTag.tag_id == Tag.id).where(ContactTag.identity_id == identity_id))
+    tags = [{"id": t.id, "name": t.name, "color": t.color} for t in tags_r.scalars().all()]
+    # recent events
+    ev_r = await db.execute(select(TelegramEvent).where(TelegramEvent.identity_id == identity_id).order_by(TelegramEvent.created_at.desc()).limit(50))
+    events = [{"id": e.id, "event_type": e.event_type, "campaign_id": e.campaign_id, "click_id": e.click_id, "created_at": e.created_at.isoformat(), "metadata": json.loads(e.event_metadata) if e.event_metadata else None} for e in ev_r.scalars().all()]
+    # clicks
+    click_ids = list({e["click_id"] for e in events if e["click_id"]})
+    clicks = []
+    if click_ids:
+        cr = await db.execute(select(Click).where(Click.id.in_(click_ids)))
+        clicks = [{"id": c.id, "click_id": c.click_id, "campaign_id": c.campaign_id, "fbclid": c.fbclid, "created_at": c.created_at.isoformat()} for c in cr.scalars().all()]
+    return {"identity": {"id": ident.id, "telegram_user_id": ident.telegram_user_id, "username": ident.username, "first_name": ident.first_name, "last_name": ident.last_name, "phone": ident.phone, "country": ident.country, "first_seen": ident.first_seen.isoformat(), "last_seen": ident.last_seen.isoformat(), "source": ident.source}, "tags": tags, "events": events, "clicks": clicks}
+
+@app.get("/api/identities/{identity_id}/journey")
+async def get_journey(identity_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TelegramEvent, Click, ConversionLog, MetaEvent
+    ident = await db.get(__import__("shared.models", fromlist=["TelegramIdentity"]).TelegramIdentity, identity_id)
+    if not ident or ident.owner_user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    # chronologically merge clicks + telegram_events + conversions + meta events
+    journey = []
+    # clicks via events
+    ev_r = await db.execute(select(TelegramEvent).where(TelegramEvent.identity_id == identity_id).order_by(TelegramEvent.created_at.asc()))
+    events = ev_r.scalars().all()
+    for e in events:
+        journey.append({"ts": e.created_at.isoformat(), "type": e.event_type, "campaign_id": e.campaign_id, "click_id": e.click_id, "meta": json.loads(e.event_metadata) if e.event_metadata else None, "source": "telegram_event"})
+    # clicks
+    click_ids = list({e.click_id for e in events if e.click_id})
+    if click_ids:
+        cr = await db.execute(select(Click).where(Click.id.in_(click_ids)))
+        for c in cr.scalars().all():
+            journey.append({"ts": c.created_at.isoformat(), "type": "CLICK", "click_id": c.id, "campaign_id": c.campaign_id, "fbclid": c.fbclid, "country": c.country, "device": c.device_type, "source": "click"})
+    # conversions
+    conv_r = await db.execute(select(ConversionLog).where(ConversionLog.identity_id == identity_id).order_by(ConversionLog.fired_at.asc()))
+    for conv in conv_r.scalars().all():
+        journey.append({"ts": conv.fired_at.isoformat(), "type": f"CONVERSION:{conv.event_type}", "campaign_id": conv.campaign_id, "trigger_type": conv.trigger_type, "status": conv.status, "source": "conversion"})
+    # meta events
+    meta_r = await db.execute(select(MetaEvent).where(MetaEvent.identity_id == identity_id).order_by(MetaEvent.created_at.asc()))
+    for me in meta_r.scalars().all():
+        journey.append({"ts": me.created_at.isoformat(), "type": f"META:{me.event_name}", "pixel_id": me.pixel_id, "status": me.status, "fbtrace_id": me.fbtrace_id, "source": "meta_event"})
+    journey.sort(key=lambda x: x["ts"])
+    return {"identity_id": identity_id, "journey": journey}
+
+# ── Tags ──
+
+@app.get("/api/tags")
+async def list_tags(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Tag
+    r = await db.execute(select(Tag).where(Tag.user_id == user.telegram_id).order_by(Tag.name))
+    return [{"id": t.id, "name": t.name, "color": t.color, "created_at": t.created_at.isoformat()} for t in r.scalars().all()]
+
+@app.post("/api/tags", status_code=201)
+async def create_tag(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Tag
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    existing = await db.execute(select(Tag).where(Tag.user_id == user.telegram_id, func.lower(Tag.name) == name.lower()))
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "Tag already exists")
+    t = Tag(user_id=user.telegram_id, name=name, color=body.get("color"))
+    db.add(t)
+    await db.commit()
+    await db.refresh(t)
+    return {"ok": True, "id": t.id}
+
+@app.delete("/api/tags/{tag_id}")
+async def delete_tag(tag_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Tag
+    t = await db.get(Tag, tag_id)
+    if not t or t.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    await db.delete(t)
+    await db.commit()
+    return {"ok": True}
+
+@app.post("/api/identities/{identity_id}/tags")
+async def add_tag_to_identity(identity_id: int, body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TelegramIdentity, Tag, ContactTag
+    ident = await db.get(TelegramIdentity, identity_id)
+    if not ident or ident.owner_user_id != user.telegram_id:
+        raise HTTPException(404, "Identity not found")
+    tag_id = body.get("tag_id")
+    if not tag_id:
+        raise HTTPException(400, "tag_id required")
+    tag = await db.get(Tag, tag_id)
+    if not tag or tag.user_id != user.telegram_id:
+        raise HTTPException(404, "Tag not found")
+    existing = await db.execute(select(ContactTag).where(ContactTag.tag_id == tag_id, ContactTag.identity_id == identity_id))
+    if existing.scalar_one_or_none():
+        return {"ok": True, "already": True}
+    ct = ContactTag(tag_id=tag_id, identity_id=identity_id)
+    db.add(ct)
+    await db.commit()
+    return {"ok": True}
+
+@app.delete("/api/identities/{identity_id}/tags/{tag_id}")
+async def remove_tag_from_identity(identity_id: int, tag_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import ContactTag, TelegramIdentity
+    ident = await db.get(TelegramIdentity, identity_id)
+    if not ident or ident.owner_user_id != user.telegram_id:
+        raise HTTPException(404, "Identity not found")
+    r = await db.execute(select(ContactTag).where(ContactTag.tag_id == tag_id, ContactTag.identity_id == identity_id))
+    ct = r.scalar_one_or_none()
+    if not ct:
+        raise HTTPException(404, "Tag not linked")
+    await db.delete(ct)
+    await db.commit()
+    return {"ok": True}
+
+# ── Event explorer ──
+
+@app.get("/api/events")
+async def list_events(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db), event_type: str | None = Query(default=None), campaign_id: int | None = Query(default=None), telegram_user_id: int | None = Query(default=None), limit: int = Query(default=50, le=200), offset: int = Query(default=0), start_date: str | None = Query(default=None), end_date: str | None = Query(default=None)):
+    from shared.models import TelegramEvent
+    q = select(TelegramEvent).where(TelegramEvent.owner_user_id == user.telegram_id)
+    if event_type:
+        q = q.where(TelegramEvent.event_type == event_type)
+    if campaign_id:
+        q = q.where(TelegramEvent.campaign_id == campaign_id)
+    if telegram_user_id:
+        q = q.where(TelegramEvent.telegram_user_id == telegram_user_id)
+    if start_date:
+        try:
+            sd = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+            q = q.where(TelegramEvent.created_at >= sd)
+        except Exception:
+            pass
+    if end_date:
+        try:
+            ed = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+            q = q.where(TelegramEvent.created_at <= ed)
+        except Exception:
+            pass
+    q = q.order_by(TelegramEvent.created_at.desc()).limit(limit).offset(offset)
+    r = await db.execute(q)
+    events = r.scalars().all()
+    return [{"id": e.id, "event_id": e.event_id, "event_type": e.event_type, "telegram_user_id": e.telegram_user_id, "identity_id": e.identity_id, "click_id": e.click_id, "campaign_id": e.campaign_id, "fbclid": e.fbclid, "created_at": e.created_at.isoformat(), "metadata": json.loads(e.event_metadata) if e.event_metadata else None} for e in events]
+
+@app.get("/api/events/{event_id}")
+async def get_event(event_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import TelegramEvent
+    e = await db.get(TelegramEvent, event_id)
+    if not e or e.owner_user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    return {"id": e.id, "event_id": e.event_id, "event_type": e.event_type, "telegram_user_id": e.telegram_user_id, "identity_id": e.identity_id, "click_id": e.click_id, "campaign_id": e.campaign_id, "account_id": e.account_id, "trigger_id": e.trigger_id, "fbclid": e.fbclid, "fbc": e.fbc, "fbp": e.fbp, "meta_event_id": e.meta_event_id, "created_at": e.created_at.isoformat(), "metadata": json.loads(e.event_metadata) if e.event_metadata else None}
+
+# ── Meta pixels ──
+
+@app.get("/api/meta-pixels")
+async def list_meta_pixels(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import MetaPixel
+    r = await db.execute(select(MetaPixel).where(MetaPixel.user_id == user.telegram_id).order_by(MetaPixel.created_at.desc()))
+    return [{"id": p.id, "pixel_id": p.pixel_id, "has_token": bool(p.access_token), "test_event_code": p.test_event_code, "is_active": p.is_active, "label": p.label, "created_at": p.created_at.isoformat()} for p in r.scalars().all()]
+
+@app.post("/api/meta-pixels", status_code=201)
+async def create_meta_pixel(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import MetaPixel
+    from shared.security import encrypt_secret
+    pixel_id = (body.get("pixel_id") or "").strip()
+    if not pixel_id or not pixel_id.isdigit():
+        raise HTTPException(400, "Valid pixel_id required (numeric)")
+    existing = await db.execute(select(MetaPixel).where(MetaPixel.user_id == user.telegram_id, MetaPixel.pixel_id == pixel_id))
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "Pixel already configured")
+    token = body.get("access_token")
+    enc = encrypt_secret(token, settings.ENCRYPTION_KEY) if token else None
+    p = MetaPixel(user_id=user.telegram_id, pixel_id=pixel_id, access_token=enc, test_event_code=body.get("test_event_code"), label=body.get("label"), is_active=True)
+    db.add(p)
+    await db.commit()
+    await db.refresh(p)
+    return {"ok": True, "id": p.id}
+
+@app.patch("/api/meta-pixels/{pixel_id}")
+async def update_meta_pixel(pixel_id: int, body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import MetaPixel
+    from shared.security import encrypt_secret
+    p = await db.get(MetaPixel, pixel_id)
+    if not p or p.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    if "access_token" in body:
+        tok = body["access_token"]
+        p.access_token = encrypt_secret(tok, settings.ENCRYPTION_KEY) if tok else None
+    if "test_event_code" in body:
+        p.test_event_code = body["test_event_code"] or None
+    if "is_active" in body:
+        p.is_active = bool(body["is_active"])
+    if "label" in body:
+        p.label = body["label"]
+    await db.commit()
+    return {"ok": True}
+
+@app.delete("/api/meta-pixels/{pixel_id}")
+async def delete_meta_pixel(pixel_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import MetaPixel
+    p = await db.get(MetaPixel, pixel_id)
+    if not p or p.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    await db.delete(p)
+    await db.commit()
+    return {"ok": True}
+
+# ── Meta events (CAPI log) ──
+
+@app.get("/api/meta-events")
+async def list_meta_events(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db), status: str | None = Query(default=None), event_name: str | None = Query(default=None), limit: int = Query(default=50, le=200), offset: int = Query(default=0)):
+    from shared.models import MetaEvent
+    q = select(MetaEvent).where(MetaEvent.owner_user_id == user.telegram_id)
+    if status:
+        q = q.where(MetaEvent.status == status)
+    if event_name:
+        q = q.where(MetaEvent.event_name == event_name)
+    q = q.order_by(MetaEvent.created_at.desc()).limit(limit).offset(offset)
+    r = await db.execute(q)
+    return [{"id": m.id, "event_id": m.event_id, "event_name": m.event_name, "pixel_id": m.pixel_id, "campaign_id": m.campaign_id, "telegram_user_id": m.telegram_user_id, "status": m.status, "attempt_count": m.attempt_count, "http_status": m.http_status, "fbtrace_id": m.fbtrace_id, "error_message": m.error_message, "created_at": m.created_at.isoformat(), "sent_at": m.sent_at.isoformat() if m.sent_at else None} for m in r.scalars().all()]
+
+@app.get("/api/meta-events/{event_id}")
+async def get_meta_event(event_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import MetaEvent
+    m = await db.get(MetaEvent, event_id)
+    if not m or m.owner_user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    return {"id": m.id, "event_id": m.event_id, "event_name": m.event_name, "pixel_id": m.pixel_id, "campaign_id": m.campaign_id, "click_id": m.click_id, "telegram_user_id": m.telegram_user_id, "fbc": m.fbc, "fbp": m.fbp, "event_time": m.event_time, "custom_data": json.loads(m.custom_data) if m.custom_data else None, "user_data": json.loads(m.user_data) if m.user_data else None, "status": m.status, "attempt_count": m.attempt_count, "http_status": m.http_status, "meta_response": json.loads(m.meta_response) if m.meta_response else None, "fbtrace_id": m.fbtrace_id, "error_message": m.error_message, "dedup_key": m.dedup_key, "created_at": m.created_at.isoformat(), "sent_at": m.sent_at.isoformat() if m.sent_at else None}
+
+@app.post("/api/meta-events/{event_id}/retry")
+async def retry_meta_event(event_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import MetaEvent, MetaEventStatus
+    m = await db.get(MetaEvent, event_id)
+    if not m or m.owner_user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    if m.status not in (MetaEventStatus.FAILED, MetaEventStatus.DEAD_LETTER, MetaEventStatus.RETRYING):
+        raise HTTPException(400, "Only failed events can be retried")
+    m.status = MetaEventStatus.QUEUED
+    m.next_attempt_at = datetime.now(timezone.utc)
+    await db.commit()
+    # enqueue
+    try:
+        from shared.queue import enqueue
+        await enqueue(settings.QUEUE_META_CAPI, {"meta_event_id": m.id, "event_id": m.event_id})
+    except Exception:
+        pass
+    return {"ok": True}
+
+@app.post("/api/meta-events/test", status_code=201)
+async def send_test_meta_event(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import MetaPixel, MetaEvent, MetaEventStatus
+    pixel_id = body.get("pixel_id")
+    event_name = body.get("event_name") or "Lead"
+    test_code = body.get("test_event_code")
+    if not pixel_id:
+        # use first active pixel
+        r = await db.execute(select(MetaPixel).where(MetaPixel.user_id == user.telegram_id, MetaPixel.is_active == True).limit(1))
+        mp = r.scalar_one_or_none()
+        if not mp:
+            raise HTTPException(400, "No pixel configured")
+        pixel_id = mp.pixel_id
+        test_code = test_code or mp.test_event_code
+    # create a test meta event directly (bypassing attribution)
+    import uuid as _uuid
+    event_id = str(_uuid.uuid4())
+    from shared.meta import build_user_data, build_custom_data
+    ud = build_user_data(telegram_id=user.telegram_id, first_name=user.first_name)
+    cd = build_custom_data()
+    me = MetaEvent(event_id=event_id, event_name=event_name, owner_user_id=user.telegram_id, pixel_id=pixel_id, event_time=int(datetime.now(timezone.utc).timestamp()), custom_data=json.dumps(cd), user_data=json.dumps(ud), status=MetaEventStatus.QUEUED, test_event_code=test_code)
+    db.add(me)
+    await db.commit()
+    await db.refresh(me)
+    try:
+        from shared.queue import enqueue
+        await enqueue(settings.QUEUE_META_CAPI, {"meta_event_id": me.id, "event_id": me.event_id})
+    except Exception:
+        pass
+    return {"ok": True, "event_id": event_id, "meta_event_id": me.id}
+
+# ── Flows ──
+
+@app.get("/api/flows")
+async def list_flows(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Flow
+    r = await db.execute(select(Flow).where(Flow.user_id == user.telegram_id).order_by(Flow.created_at.desc()))
+    return [{"id": f.id, "name": f.name, "description": f.description, "is_active": f.is_active, "campaign_id": f.campaign_id, "trigger_type": f.trigger_type, "created_at": f.created_at.isoformat()} for f in r.scalars().all()]
+
+@app.post("/api/flows", status_code=201)
+async def create_flow(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Flow
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    campaign_id = body.get("campaign_id")
+    if campaign_id:
+        camp = await db.get(Campaign, campaign_id)
+        if not camp or camp.user_id != user.telegram_id:
+            raise HTTPException(404, "Campaign not found")
+    f = Flow(user_id=user.telegram_id, name=name, description=body.get("description"), campaign_id=campaign_id, trigger_type=body.get("trigger_type"), is_active=body.get("is_active", True))
+    db.add(f)
+    await db.commit()
+    await db.refresh(f)
+    return {"ok": True, "id": f.id}
+
+@app.get("/api/flows/{flow_id}")
+async def get_flow(flow_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Flow, FlowNode, FlowEdge
+    f = await db.get(Flow, flow_id)
+    if not f or f.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    nodes_r = await db.execute(select(FlowNode).where(FlowNode.flow_id == flow_id))
+    edges_r = await db.execute(select(FlowEdge).where(FlowEdge.flow_id == flow_id))
+    nodes = [{"id": n.id, "node_type": n.node_type, "action_type": n.action_type, "config": json.loads(n.config) if n.config else None, "position_x": n.position_x, "position_y": n.position_y} for n in nodes_r.scalars().all()]
+    edges = [{"id": e.id, "source_node_id": e.source_node_id, "target_node_id": e.target_node_id, "label": e.label} for e in edges_r.scalars().all()]
+    return {"id": f.id, "name": f.name, "description": f.description, "is_active": f.is_active, "campaign_id": f.campaign_id, "trigger_type": f.trigger_type, "nodes": nodes, "edges": edges}
+
+@app.patch("/api/flows/{flow_id}")
+async def update_flow(flow_id: int, body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Flow
+    f = await db.get(Flow, flow_id)
+    if not f or f.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    if "name" in body:
+        f.name = body["name"]
+    if "description" in body:
+        f.description = body["description"]
+    if "is_active" in body:
+        f.is_active = bool(body["is_active"])
+    if "campaign_id" in body:
+        f.campaign_id = body["campaign_id"]
+    if "trigger_type" in body:
+        f.trigger_type = body["trigger_type"]
+    await db.commit()
+    return {"ok": True}
+
+@app.delete("/api/flows/{flow_id}")
+async def delete_flow(flow_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Flow
+    f = await db.get(Flow, flow_id)
+    if not f or f.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    await db.delete(f)
+    await db.commit()
+    return {"ok": True}
+
+@app.post("/api/flows/{flow_id}/nodes", status_code=201)
+async def create_flow_node(flow_id: int, body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Flow, FlowNode
+    f = await db.get(Flow, flow_id)
+    if not f or f.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    node_type = body.get("node_type") or "action"
+    n = FlowNode(flow_id=flow_id, node_type=node_type, action_type=body.get("action_type"), config=json.dumps(body.get("config")) if body.get("config") else None, position_x=body.get("position_x", 0), position_y=body.get("position_y", 0))
+    db.add(n)
+    await db.commit()
+    await db.refresh(n)
+    return {"ok": True, "id": n.id}
+
+@app.post("/api/flows/{flow_id}/edges", status_code=201)
+async def create_flow_edge(flow_id: int, body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import Flow, FlowEdge
+    f = await db.get(Flow, flow_id)
+    if not f or f.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    e = FlowEdge(flow_id=flow_id, source_node_id=body["source_node_id"], target_node_id=body["target_node_id"], label=body.get("label"))
+    db.add(e)
+    await db.commit()
+    await db.refresh(e)
+    return {"ok": True, "id": e.id}
+
+# ── Attribution settings ──
+
+@app.get("/api/settings/attribution")
+async def get_attribution_settings(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import AttributionSetting
+    r = await db.execute(select(AttributionSetting).where(AttributionSetting.user_id == user.telegram_id))
+    s = r.scalar_one_or_none()
+    if not s:
+        from shared.config import get_settings as gs
+        g = gs()
+        return {"model": g.ATTRIBUTION_MODEL, "window_hours": g.ATTRIBUTION_WINDOW_HOURS, "include_organic": g.ATTRIBUTION_INCLUDE_ORGANIC}
+    return {"model": s.model, "window_hours": s.window_hours, "include_organic": s.include_organic}
+
+@app.put("/api/settings/attribution")
+async def put_attribution_settings(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import AttributionSetting
+    model = body.get("model") or "last_touch"
+    if model not in ("last_touch", "first_touch", "last_non_direct"):
+        raise HTTPException(400, "Invalid model")
+    window = int(body.get("window_hours") or 168)
+    if window < 1 or window > 720:
+        raise HTTPException(400, "window_hours must be 1..720")
+    inc = bool(body.get("include_organic", False))
+    r = await db.execute(select(AttributionSetting).where(AttributionSetting.user_id == user.telegram_id))
+    s = r.scalar_one_or_none()
+    if not s:
+        s = AttributionSetting(user_id=user.telegram_id, model=model, window_hours=window, include_organic=inc)
+        db.add(s)
+    else:
+        s.model = model; s.window_hours = window; s.include_organic = inc
+    await db.commit()
+    return {"ok": True}
+
+# ── API keys ──
+
+@app.get("/api/api-keys")
+async def list_api_keys(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import ApiKey
+    r = await db.execute(select(ApiKey).where(ApiKey.user_id == user.telegram_id).order_by(ApiKey.created_at.desc()))
+    return [{"id": k.id, "prefix": k.prefix, "label": k.label, "is_active": k.is_active, "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None, "created_at": k.created_at.isoformat()} for k in r.scalars().all()]
+
+@app.post("/api/api-keys", status_code=201)
+async def create_api_key(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import ApiKey
+    import hashlib, secrets
+    raw = secrets.token_urlsafe(32)
+    prefix = raw[:8]
+    h = hashlib.sha256(raw.encode()).hexdigest()
+    k = ApiKey(user_id=user.telegram_id, key_hash=h, prefix=prefix, label=body.get("label"))
+    db.add(k)
+    await db.commit()
+    await db.refresh(k)
+    return {"ok": True, "id": k.id, "key": raw, "prefix": prefix}
+
+@app.delete("/api/api-keys/{key_id}")
+async def delete_api_key(key_id: int, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from shared.models import ApiKey
+    k = await db.get(ApiKey, key_id)
+    if not k or k.user_id != user.telegram_id:
+        raise HTTPException(404, "Not found")
+    await db.delete(k)
+    await db.commit()
+    return {"ok": True}
+
+# ── Enhanced analytics ──
+
+@app.get("/api/analytics/overview")
+async def analytics_overview(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db), days: int = Query(default=30, le=365), campaign_id: int | None = Query(default=None)):
+    from shared.models import Click, TelegramEvent, ConversionLog, MetaEvent
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    # clicks
+    camp_ids_r = await db.execute(select(Campaign.id).where(Campaign.user_id == user.telegram_id))
+    camp_ids = [r[0] for r in camp_ids_r.all()]
+    if not camp_ids:
+        return {"clicks": 0, "users": 0, "conversions": 0, "meta_sent": 0, "meta_failed": 0, "series": []}
+    q_clicks = select(func.count()).select_from(Click).where(Click.campaign_id.in_(camp_ids), Click.created_at >= cutoff)
+    if campaign_id:
+        q_clicks = q_clicks.where(Click.campaign_id == campaign_id)
+    clicks = (await db.execute(q_clicks)).scalar() or 0
+    # telegram users
+    q_users = select(func.count(func.distinct(TelegramEvent.telegram_user_id))).where(TelegramEvent.owner_user_id == user.telegram_id, TelegramEvent.created_at >= cutoff)
+    if campaign_id:
+        q_users = q_users.where(TelegramEvent.campaign_id == campaign_id)
+    users = (await db.execute(q_users)).scalar() or 0
+    q_conv = select(func.count()).select_from(ConversionLog).join(Campaign, ConversionLog.campaign_id == Campaign.id).where(Campaign.user_id == user.telegram_id, ConversionLog.fired_at >= cutoff)
+    if campaign_id:
+        q_conv = q_conv.where(ConversionLog.campaign_id == campaign_id)
+    convs = (await db.execute(q_conv)).scalar() or 0
+    q_meta_sent = select(func.count()).select_from(MetaEvent).where(MetaEvent.owner_user_id == user.telegram_id, MetaEvent.status == "SENT", MetaEvent.created_at >= cutoff)
+    meta_sent = (await db.execute(q_meta_sent)).scalar() or 0
+    q_meta_failed = select(func.count()).select_from(MetaEvent).where(MetaEvent.owner_user_id == user.telegram_id, MetaEvent.status.in_(["FAILED","DEAD_LETTER"]), MetaEvent.created_at >= cutoff)
+    meta_failed = (await db.execute(q_meta_failed)).scalar() or 0
+    # series per day
+    # Use date grouping — sqlite vs postgres
+    from shared.config import get_settings as gs
+    is_sqlite = gs().is_sqlite
+    if is_sqlite:
+        date_expr = func.date(Click.created_at)
+    else:
+        date_expr = func.date_trunc("day", Click.created_at)
+    q_series = select(date_expr.label("d"), func.count().label("c")).where(Click.campaign_id.in_(camp_ids), Click.created_at >= cutoff).group_by(date_expr).order_by(date_expr)
+    series_r = await db.execute(q_series)
+    series = [{"date": str(row[0]), "clicks": row[1]} for row in series_r.all()]
+    return {"clicks": clicks, "users": users, "conversions": convs, "meta_sent": meta_sent, "meta_failed": meta_failed, "series": series, "rate": round(convs/clicks*100,2) if clicks else 0}
+
+@app.get("/api/analytics/breakdown")
+async def analytics_breakdown(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db), by: str = Query(default="country"), days: int = Query(default=30), campaign_id: int | None = Query(default=None)):
+    from shared.models import Click
+    from datetime import timedelta
+    if by not in ("country","device_type","browser","os"):
+        raise HTTPException(400, "by must be country|device_type|browser|os")
+    camp_ids_r = await db.execute(select(Campaign.id).where(Campaign.user_id == user.telegram_id))
+    camp_ids = [r[0] for r in camp_ids_r.all()]
+    if not camp_ids:
+        return []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    col = getattr(Click, by)
+    q = select(col, func.count().label("c")).where(Click.campaign_id.in_(camp_ids), Click.created_at >= cutoff)
+    if campaign_id:
+        q = q.where(Click.campaign_id == campaign_id)
+    q = q.group_by(col).order_by(func.count().desc()).limit(20)
+    r = await db.execute(q)
+    return [{"value": row[0] or "Unknown", "count": row[1]} for row in r.all()]
+
+@app.get("/api/export/clicks.csv")
+async def export_clicks_csv(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from fastapi.responses import StreamingResponse
+    import csv, io
+    from shared.models import Click
+    camp_ids_r = await db.execute(select(Campaign.id).where(Campaign.user_id == user.telegram_id))
+    camp_ids = [r[0] for r in camp_ids_r.all()]
+    q = select(Click).where(Click.campaign_id.in_(camp_ids) if camp_ids else False).order_by(Click.created_at.desc()).limit(10000)
+    r = await db.execute(q)
+    clicks = r.scalars().all()
+    output = io.StringIO()
+    w = csv.writer(output)
+    w.writerow(["click_id","campaign_id","fbclid","fbc","fbp","country","device_type","browser","os","ip","created_at"])
+    for c in clicks:
+        w.writerow([c.click_id, c.campaign_id, c.fbclid or "", (c.fbc[:20]+"…" if c.fbc else ""), bool(c.fbp), c.country or "", c.device_type or "", c.browser or "", c.os or "", c.ip or "", c.created_at.isoformat()])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=clicks.csv"})
+
+@app.get("/api/export/conversions.csv")
+async def export_conversions_csv(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    from fastapi.responses import StreamingResponse
+    import csv, io
+    q = select(ConversionLog, Campaign.name.label("campaign_name")).join(Campaign, ConversionLog.campaign_id == Campaign.id).where(Campaign.user_id == user.telegram_id).order_by(ConversionLog.fired_at.desc()).limit(10000)
+    r = await db.execute(q)
+    rows = r.all()
+    output = io.StringIO()
+    w = csv.writer(output)
+    w.writerow(["id","campaign","event_type","trigger_type","telegram_user_id","fbclid","status","fired_at"])
+    for row in rows:
+        c = row[0]
+        w.writerow([c.id, row[1], c.event_type, c.trigger_type, c.telegram_user_id, c.fbclid or "", c.status, c.fired_at.isoformat()])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=conversions.csv"})
+
+# ── Health extended (already exists as /health, add granular) ──
+
+@app.get("/api/health/detailed")
+async def detailed_health(user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    # reuse health logic inline
+    from sqlalchemy import text as _text
+    h = {}
+    try:
+        await db.execute(_text("SELECT 1"))
+        h["database"] = {"status": "connected"}
+    except Exception as e:
+        h["database"] = {"status": "ERROR", "error": str(e)}
+    try:
+        await redis_client.ping()
+        h["redis"] = {"status": "connected"}
+    except Exception as e:
+        h["redis"] = {"status": "ERROR", "error": str(e)}
+    h["config"] = {"base_url": settings.BASE_URL}
+    # add queue depths
+    try:
+        from shared.queue import queue_depth, delayed_depth
+        h["queues"] = {
+            "meta_capi": await queue_depth(settings.QUEUE_META_CAPI),
+            "meta_capi_delayed": await delayed_depth(settings.QUEUE_META_CAPI),
+        }
+    except Exception as e:
+        h["queues"] = {"error": str(e)}
+    # worker heartbeats
+    try:
+        hb = await redis_client.get("worker:heartbeat:meta_capi")
+        h["workers"] = {"meta_capi_last_heartbeat": hb}
+    except Exception:
+        pass
+    return h
+
+# ── Internal: reload channels (for hot-reload without worker restart) ──
+
+@app.post("/api/internal/reload-channels")
+async def reload_channels(user: DashboardUser = Depends(require_user)):
+    try:
+        await redis_client.publish("tg:reload_channels", json.dumps({"user_id": user.telegram_id, "ts": datetime.now(timezone.utc).isoformat()}))
+    except Exception as e:
+        logger.warning("reload publish failed: %s", e)
+    return {"ok": True}
+
+# ── Custom event ingestion (authenticated) ──
+
+@app.post("/api/events/custom")
+async def ingest_custom_event(body: dict, user: DashboardUser = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    telegram_user_id = body.get("telegram_user_id")
+    if not telegram_user_id:
+        raise HTTPException(400, "telegram_user_id required")
+    try:
+        telegram_user_id = int(telegram_user_id)
+    except ValueError:
+        raise HTTPException(400, "telegram_user_id must be int")
+    event_name = body.get("event_name") or body.get("event_type") or "Custom"
+    campaign_id = body.get("campaign_id")
+    if campaign_id:
+        camp = await db.get(Campaign, campaign_id)
+        if not camp or camp.user_id != user.telegram_id:
+            raise HTTPException(404, "Campaign not found")
+    # find attribution
+    from shared.attribution import resolve_attribution
+    attr = await resolve_attribution(user.telegram_id, telegram_user_id)
+    click_id = attr["click_id"] if attr else None
+    campaign_id = campaign_id or (attr["campaign_id"] if attr else None)
+    from shared.models import TelegramEvent, TelegramEventType
+    # record
+    from shared.events import record_event
+    result = await record_event(owner_user_id=user.telegram_id, telegram_user_id=telegram_user_id, event_type=TelegramEventType.CUSTOM_EVENT, campaign_id=campaign_id, click_id=click_id, metadata={"event_name": event_name, "value": body.get("value"), "currency": body.get("currency")}, sender=None)
+    # Create conversion log + meta event via queue (always, if pixel exists)
+    if campaign_id and event_name:
+        from shared.models import ConversionTrigger, TriggerType
+        trig_r = await db.execute(select(ConversionTrigger).where(ConversionTrigger.campaign_id == campaign_id, ConversionTrigger.trigger_type == TriggerType.custom_event, ConversionTrigger.event_name == event_name))
+        trig = trig_r.scalar_one_or_none()
+        # Use trigger's value/currency if exists, otherwise body values
+        trig_value = trig.value if trig else body.get("value")
+        trig_currency = trig.currency if trig else body.get("currency")
+        trig_content = trig.content_name if trig else body.get("content_name")
+        from shared.models import ConversionLog, ConversionStatus, MetaEvent, MetaEventStatus
+        from shared.meta import build_user_data, build_custom_data, new_event_id, dedup_key
+        fbc = attr["fbc"] if attr else None
+        fbp = attr["fbp"] if attr else None
+        event_id = new_event_id()
+        ud = build_user_data(telegram_id=telegram_user_id, fbc=fbc, fbp=fbp)
+        cd = build_custom_data(value=trig_value, currency=trig_currency, content_name=trig_content)
+        pixel_id = None
+        if campaign_id:
+            camp = await db.get(Campaign, campaign_id)
+            if camp:
+                acct = await db.get(TelegramAccount, camp.account_id) if camp.account_id else None
+                pixel_id = acct.meta_pixel_id if acct and acct.meta_pixel_id else None
+                if not pixel_id:
+                    from shared.models import MetaPixel
+                    r = await db.execute(select(MetaPixel).where(MetaPixel.user_id == user.telegram_id, MetaPixel.is_active == True).limit(1))
+                    mp = r.scalar_one_or_none()
+                    if mp:
+                        pixel_id = mp.pixel_id
+        if pixel_id:
+            dedup = dedup_key(event_name, event_id, pixel_id)
+            # check dedup
+            existing = await db.execute(select(MetaEvent).where(MetaEvent.dedup_key == dedup))
+            if not existing.scalar_one_or_none():
+                me = MetaEvent(event_id=event_id, event_name=event_name, owner_user_id=user.telegram_id, pixel_id=pixel_id, campaign_id=campaign_id, click_id=click_id, telegram_user_id=telegram_user_id, fbc=fbc, fbp=fbp, event_time=int(datetime.now(timezone.utc).timestamp()), custom_data=json.dumps(cd), user_data=json.dumps(ud), status=MetaEventStatus.QUEUED, dedup_key=dedup)
+                db.add(me)
+                # also log conversion
+                db.add(ConversionLog(campaign_id=campaign_id, account_id=camp.account_id if camp else 0, trigger_id=trig.id if trig else None, trigger_type="custom_event", telegram_user_id=telegram_user_id, event_type=event_name, event_value=float(trig_value) if trig_value else None, event_currency=trig_currency, content_name=trig_content, status=ConversionStatus.fired, meta_event_id=event_id, fbclid=attr["fbclid"] if attr else None, fbc=fbc, fbp=fbp, click_id=click_id, fired_at=datetime.now(timezone.utc)))
+                await db.commit()
+                await db.refresh(me)
+                try:
+                    from shared.queue import enqueue
+                    await enqueue(settings.QUEUE_META_CAPI, {"meta_event_id": me.id})
+                except Exception:
+                    pass
+    return {"ok": True, "event_name": event_name}
+

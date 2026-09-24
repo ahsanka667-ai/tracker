@@ -402,6 +402,60 @@ select option{background:var(--bg2)}
       <span class="nav-badge" id="inbox-nav-badge"></span>
     </div>
   </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Traffic</div>
+    <div class="nav-item" onclick="switchTab('links')" data-tab="links">
+      <span class="nav-icon">🔗</span> Tracking Links
+    </div>
+    <div class="nav-item" onclick="switchTab('clicks')" data-tab="clicks">
+      <span class="nav-icon">👆</span> Clicks
+    </div>
+    <div class="nav-item" onclick="switchTab('domains')" data-tab="domains">
+      <span class="nav-icon">🌐</span> Domains
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">CRM</div>
+    <div class="nav-item" onclick="switchTab('contacts')" data-tab="contacts">
+      <span class="nav-icon">👤</span> Contacts
+    </div>
+    <div class="nav-item" onclick="switchTab('tags')" data-tab="tags">
+      <span class="nav-icon">🏷️</span> Tags
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Analytics</div>
+    <div class="nav-item" onclick="switchTab('events')" data-tab="events">
+      <span class="nav-icon">📡</span> Event Explorer
+    </div>
+    <div class="nav-item" onclick="switchTab('journeys')" data-tab="journeys">
+      <span class="nav-icon">🗺️</span> User Journeys
+    </div>
+    <div class="nav-item" onclick="switchTab('analytics')" data-tab="analytics">
+      <span class="nav-icon">📈</span> Analytics
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Meta</div>
+    <div class="nav-item" onclick="switchTab('pixels')" data-tab="pixels">
+      <span class="nav-icon">🎯</span> Pixels
+    </div>
+    <div class="nav-item" onclick="switchTab('capievents')" data-tab="capievents">
+      <span class="nav-icon">📤</span> CAPI Events
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Automation</div>
+    <div class="nav-item" onclick="switchTab('flows')" data-tab="flows">
+      <span class="nav-icon">⚡</span> Flows
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Settings</div>
+    <div class="nav-item" onclick="switchTab('settings')" data-tab="settings">
+      <span class="nav-icon">⚙️</span> Settings
+    </div>
+  </div>
   <div class="sidebar-section admin-only" style="display:none">
     <div class="sidebar-label">Admin</div>
     <div class="nav-item" onclick="switchTab('access')" data-tab="access">
@@ -412,7 +466,7 @@ select option{background:var(--bg2)}
     </div>
   </div>
   <div class="sidebar-footer">
-    <div style="font-size:10px;color:var(--text3);text-align:center">TG Tracker v4</div>
+    <div style="font-size:10px;color:var(--text3);text-align:center">TG Tracker v5</div>
   </div>
 </nav>
 
@@ -972,9 +1026,75 @@ select option{background:var(--bg2)}
       <button class="btn" onclick="closeModal('modal-token')">Close</button>
       <button class="btn btn-primary" id="tok-btn" onclick="generateToken()">Generate</button>
     </div>
-  </div>
+  
+<!-- New v5 panels -->
+<div class="panel" id="tab-links">
+  <div class="page-header"><div><div class="page-title">Tracking Links</div><div class="page-sub">Campaign + Telegram destination links</div></div><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openModal('modal-link')">+ New Link</button><button class="btn btn-ghost btn-sm" onclick="loadLinks()">↺</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>Slug</th><th>URL</th><th>Destination</th><th>Clicks</th><th>Status</th><th></th></tr></thead><tbody id="links-tbody"><tr><td colspan="6" class="tbl-empty">No links yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-clicks">
+  <div class="page-header"><div><div class="page-title">Clicks</div><div class="page-sub">Every tracked visit — IP, device, attribution</div></div><div class="page-actions"><button class="btn btn-ghost btn-sm" onclick="loadClicks()">↺</button><button class="btn btn-ghost btn-sm" onclick="exportClicks()">⬇ CSV</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>Time</th><th>Click ID</th><th>Campaign</th><th>Country</th><th>Device</th><th>fbclid</th></tr></thead><tbody id="clicks-tbody"><tr><td colspan="6" class="tbl-empty">No clicks yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-domains">
+  <div class="page-header"><div><div class="page-title">Tracking Domains</div><div class="page-sub">Your domains for tracking links</div></div><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openModal('modal-domain')">+ Add Domain</button><button class="btn btn-ghost btn-sm" onclick="loadDomains()">↺</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>Domain</th><th>Active</th><th>Created</th><th></th></tr></thead><tbody id="domains-tbody"><tr><td colspan="4" class="tbl-empty">No domains yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-contacts">
+  <div class="page-header"><div><div class="page-title">Contacts</div><div class="page-sub">Telegram identities — one per user, cross-campaign</div></div><div class="page-actions"><input id="contacts-search" placeholder="Search username or name" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);width:200px" onkeydown="if(event.key==='Enter')loadContacts()"><button class="btn btn-ghost btn-sm" onclick="loadContacts()">↺</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>User</th><th>Username</th><th>First Seen</th><th>Last Seen</th><th>Source</th><th></th></tr></thead><tbody id="contacts-tbody"><tr><td colspan="6" class="tbl-empty">No contacts yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-tags">
+  <div class="page-header"><div><div class="page-title">Tags</div><div class="page-sub">Organize contacts</div></div><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openModal('modal-tag')">+ New Tag</button><button class="btn btn-ghost btn-sm" onclick="loadTags()">↺</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Color</th><th>Created</th><th></th></tr></thead><tbody id="tags-tbody"><tr><td colspan="4" class="tbl-empty">No tags yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-events">
+  <div class="page-header"><div><div class="page-title">Event Explorer</div><div class="page-sub">Every Telegram + conversion event, filterable</div></div><div class="page-actions"><select id="events-filter-type" onchange="loadEvents()" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text)"><option value="">All types</option><option>BOT_START</option><option>CHANNEL_JOIN</option><option>KEYWORD_MATCH</option><option>CUSTOM_EVENT</option></select><button class="btn btn-ghost btn-sm" onclick="loadEvents()">↺</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>Time</th><th>Type</th><th>User</th><th>Campaign</th><th>Click</th></tr></thead><tbody id="events-tbody"><tr><td colspan="5" class="tbl-empty">No events yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-journeys">
+  <div class="page-header"><div><div class="page-title">User Journeys</div><div class="page-sub">Chronological path for each Telegram user</div></div><div class="page-actions"><input id="journey-identity" placeholder="Identity ID or Telegram User ID" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);width:220px"><button class="btn btn-primary btn-sm" onclick="loadJourney()">Load</button></div></div>
+  <div class="card"><div class="card-body" id="journey-body"><div class="tbl-empty">Enter an identity ID to see the journey</div></div></div>
+</div>
+<div class="panel" id="tab-analytics">
+  <div class="page-header"><div><div class="page-title">Analytics</div><div class="page-sub">Clicks, users, conversions over time</div></div><div class="page-actions"><button class="btn btn-ghost btn-sm" onclick="loadAnalytics()">↺</button></div></div>
+  <div class="stats-grid" style="margin-bottom:14px"><div class="stat-card"><div class="stat-label">Clicks</div><div class="stat-value" id="a-clicks">—</div></div><div class="stat-card"><div class="stat-label">Users</div><div class="stat-value" id="a-users">—</div></div><div class="stat-card"><div class="stat-label">Conversions</div><div class="stat-value" id="a-convs">—</div></div><div class="stat-card"><div class="stat-label">Meta Sent</div><div class="stat-value" id="a-metasent">—</div></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Clicks over time</span></div><div class="card-body" id="analytics-series" style="padding:16px"><div class="tbl-empty">Loading...</div></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Breakdown</span><select id="analytics-by" onchange="loadAnalytics()" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:11px;color:var(--text)"><option value="country">Country</option><option value="device_type">Device Type</option><option value="browser">Browser</option><option value="os">OS</option></select></div><div class="card-body" id="analytics-breakdown" style="padding:12px"></div></div>
+</div>
+<div class="panel" id="tab-pixels">
+  <div class="page-header"><div><div class="page-title">Meta Pixels</div><div class="page-sub">Pixel ID + CAPI token + test event code</div></div><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openModal('modal-pixel')">+ Add Pixel</button><button class="btn btn-ghost btn-sm" onclick="loadPixels()">↺</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>Pixel ID</th><th>Active</th><th>Has Token</th><th>Test Code</th><th></th></tr></thead><tbody id="pixels-tbody"><tr><td colspan="5" class="tbl-empty">No pixels yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-capievents">
+  <div class="page-header"><div><div class="page-title">CAPI Events</div><div class="page-sub">Meta Conversions API log — queued, sent, failed, dead-letter</div></div><div class="page-actions"><select id="capi-filter-status" onchange="loadCapiEvents()" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text)"><option value="">All statuses</option><option>QUEUED</option><option>SENT</option><option>FAILED</option><option>DEAD_LETTER</option><option>RETRYING</option></select><button class="btn btn-ghost btn-sm" onclick="loadCapiEvents()">↺</button><button class="btn btn-primary btn-sm" onclick="sendTestEvent()">Test Event</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>Time</th><th>Event</th><th>Pixel</th><th>Status</th><th>Attempts</th><th></th></tr></thead><tbody id="capievents-tbody"><tr><td colspan="6" class="tbl-empty">No CAPI events yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-flows">
+  <div class="page-header"><div><div class="page-title">Flows</div><div class="page-sub">Automation: when X happens, do Y</div></div><div class="page-actions"><button class="btn btn-primary btn-sm" onclick="openModal('modal-flow')">+ New Flow</button><button class="btn btn-ghost btn-sm" onclick="loadFlows()">↺</button></div></div>
+  <div class="card"><div class="card-body tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Trigger</th><th>Active</th><th>Campaign</th><th></th></tr></thead><tbody id="flows-tbody"><tr><td colspan="5" class="tbl-empty">No flows yet</td></tr></tbody></table></div></div>
+</div>
+<div class="panel" id="tab-settings">
+  <div class="page-header"><div><div class="page-title">Settings</div><div class="page-sub">Attribution, API keys, privacy</div></div></div>
+  <div class="card" style="margin-bottom:14px"><div class="card-header"><span class="card-title">Attribution</span></div><div class="card-body" style="padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text2)">Model<select id="set-att-model" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text)"><option value="last_touch">Last Touch</option><option value="first_touch">First Touch</option><option value="last_non_direct">Last Non-Direct</option></select></label>
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text2)">Window (hours)<input id="set-att-window" type="number" min="1" max="720" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);width:110px"></label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text)"><input type="checkbox" id="set-att-organic"> Include organic</label>
+    <button class="btn btn-primary btn-sm" onclick="saveAttribution()">Save</button>
+  </div></div>
+  <div class="card" style="margin-bottom:14px"><div class="card-header"><span class="card-title">API Keys</span><button class="btn btn-primary btn-xs" onclick="createApiKey()">+ New Key</button></div><div class="card-body" id="apikeys-body" style="padding:12px"><div class="tbl-empty">Loading...</div></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Health</span><button class="btn btn-ghost btn-xs" onclick="loadHealth()">↺</button></div><div class="card-body" id="health-body" style="padding:12px"><div class="tbl-empty">Loading...</div></div></div>
 </div>
 
+</div>
+</div>
+
+
+<div class="modal-backdrop" id="modal-pixel" onclick="backdropClose(event,'modal-pixel')" style="display:none"><div class="modal"><div class="modal-header"><div class="modal-title">Add Meta Pixel</div><button class="btn btn-ghost btn-icon" onclick="closeModal('modal-pixel')">✕</button></div><div class="modal-body" style="display:flex;flex-direction:column;gap:12px"><label style="font-size:11px;color:var(--text2)">Pixel ID<input id="px-id" placeholder="123456789012345" style="width:100%;margin-top:4px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"></label><label style="font-size:11px;color:var(--text2)">Access Token<input id="px-token" type="password" placeholder="EAA..." style="width:100%;margin-top:4px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"></label><label style="font-size:11px;color:var(--text2)">Test Event Code (optional)<input id="px-test" placeholder="TEST12345" style="width:100%;margin-top:4px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"></label><div id="px-err" class="alert alert-error" style="display:none"></div></div><div class="modal-footer"><button class="btn" onclick="closeModal('modal-pixel')">Cancel</button><button class="btn btn-primary" id="px-btn" onclick="createPixel()">Create</button></div></div></div>
+<div class="modal-backdrop" id="modal-domain" onclick="backdropClose(event,'modal-domain')" style="display:none"><div class="modal"><div class="modal-header"><div class="modal-title">Add Domain</div><button class="btn btn-ghost btn-icon" onclick="closeModal('modal-domain')">✕</button></div><div class="modal-body"><input id="dm-domain" placeholder="track.example.com" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"><div id="dm-err" class="alert alert-error" style="display:none;margin-top:10px"></div></div><div class="modal-footer"><button class="btn" onclick="closeModal('modal-domain')">Cancel</button><button class="btn btn-primary" id="dm-btn" onclick="createDomain()">Create</button></div></div></div>
+<div class="modal-backdrop" id="modal-link" onclick="backdropClose(event,'modal-link')" style="display:none"><div class="modal"><div class="modal-header"><div class="modal-title">New Tracking Link</div><button class="btn btn-ghost btn-icon" onclick="closeModal('modal-link')">✕</button></div><div class="modal-body" style="display:flex;flex-direction:column;gap:10px"><input id="lk-label" placeholder="Label (optional)" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"><input id="lk-dest" placeholder="Destination e.g. @mybot or https://t.me/mybot" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"><select id="lk-campaign" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"><option value="">No campaign (generic)</option></select><div id="lk-err" class="alert alert-error" style="display:none"></div></div><div class="modal-footer"><button class="btn" onclick="closeModal('modal-link')">Cancel</button><button class="btn btn-primary" id="lk-btn" onclick="createLink()">Create</button></div></div></div>
+<div class="modal-backdrop" id="modal-tag" onclick="backdropClose(event,'modal-tag')" style="display:none"><div class="modal"><div class="modal-header"><div class="modal-title">New Tag</div><button class="btn btn-ghost btn-icon" onclick="closeModal('modal-tag')">✕</button></div><div class="modal-body"><input id="tag-name" placeholder="Tag name" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"><div id="tag-err" class="alert alert-error" style="display:none;margin-top:10px"></div></div><div class="modal-footer"><button class="btn" onclick="closeModal('modal-tag')">Cancel</button><button class="btn btn-primary" id="tag-btn" onclick="createTag()">Create</button></div></div></div>
+<div class="modal-backdrop" id="modal-flow" onclick="backdropClose(event,'modal-flow')" style="display:none"><div class="modal"><div class="modal-header"><div class="modal-title">New Flow</div><button class="btn btn-ghost btn-icon" onclick="closeModal('modal-flow')">✕</button></div><div class="modal-body" style="display:flex;flex-direction:column;gap:10px"><input id="flow-name" placeholder="Flow name" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"><input id="flow-trigger" placeholder="Trigger e.g. bot_start, keyword" style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text)"><div id="flow-err" class="alert alert-error" style="display:none"></div></div><div class="modal-footer"><button class="btn" onclick="closeModal('modal-flow')">Cancel</button><button class="btn btn-primary" id="flow-btn" onclick="createFlow()">Create</button></div></div></div>
 <script>
 const API = window.location.origin;
 let me = { telegram_id: 0, first_name: '', is_admin: false };
@@ -1297,7 +1417,7 @@ function handleRealtime(event) {
 
 async function loadAll() {
   try { await fetch(API + '/health'); } catch(e) { return; }
-  const tasks = [loadSummary(), loadCampaigns(), loadAccounts(), loadConversions(), loadMessages(), loadFunnels(), loadUnreadCount()];
+  const tasks = [loadSummary(), loadCampaigns(), loadAccounts(), loadConversions(), loadMessages(), loadFunnels(), loadUnreadCount(), loadLinks(), loadClicks(), loadPixels(), loadCapiEvents()];
   if (me.is_admin) tasks.push(loadUsers(), loadTokens());
   await Promise.allSettled(tasks);
 }
@@ -2201,6 +2321,17 @@ function switchTab(name) {
   document.querySelector(`[data-tab="${name}"]`)?.classList.add('active');
   if(name==='inbox'){loadMessages();loadUnreadCount();}
   if(name==='funnels') loadFunnels();
+  if(name==='links') loadLinks();
+  if(name==='clicks') loadClicks();
+  if(name==='domains') loadDomains();
+  if(name==='contacts') loadContacts();
+  if(name==='tags') loadTags();
+  if(name==='events') loadEvents();
+  if(name==='analytics') loadAnalytics();
+  if(name==='pixels') loadPixels();
+  if(name==='capievents') loadCapiEvents();
+  if(name==='flows') loadFlows();
+  if(name==='settings'){loadAttribution();loadApiKeys();loadHealth();}
 }
 
 function openModal(id){
@@ -2252,7 +2383,77 @@ function setV(id,val){const el=document.getElementById(id);if(el) el.value=val;}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function showErr(id,msg){const el=document.getElementById(id);if(el){el.textContent=msg;el.style.display='flex';}}
 function hideErr(id){const el=document.getElementById(id);if(el) el.style.display='none';}
+
+async function loadLinks(){
+  try{const links=await api('/tracking-links');document.getElementById('links-tbody').innerHTML=links.length?links.map(l=>`<tr><td><code>${esc(l.slug)}</code></td><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="${esc(l.url)}" target="_blank" style="color:var(--blue)">${esc(l.url)}</a> <button class="copy-btn" onclick="copyText('${esc(l.url)}',this)">Copy</button></td><td>${esc(l.destination)}</td><td>${l.total_clicks}</td><td>${l.is_active?'✅':''}</td><td><button class="btn btn-ghost btn-xs" onclick="deleteLink(${l.id})">🗑</button></td></tr>`).join(''):'<tr><td colspan="6" class="tbl-empty">No links yet</td></tr>';populateLinkCampaigns();}catch(e){}
+}
+async function populateLinkCampaigns(){
+  try{const camps=await api('/campaigns');document.getElementById('lk-campaign').innerHTML='<option value="">No campaign</option>'+camps.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');}catch(e){}
+}
+async function createLink(){
+  const body={label:v('lk-label'),destination:v('lk-dest'),campaign_id:document.getElementById('lk-campaign').value||null};
+  if(!body.destination){showErr('lk-err','Destination required');return;}
+  await btnLoad('lk-btn',async()=>{await api('/tracking-links','POST',body);closeModal('modal-link');loadLinks();},'lk-err');
+}
+async function deleteLink(id){if(!confirm('Delete link?'))return;await api('/tracking-links/'+id,'DELETE');loadLinks();}
+async function loadClicks(){
+  try{const clicks=await api('/clicks');document.getElementById('clicks-tbody').innerHTML=clicks.length?clicks.map(c=>`<tr><td>${timeAgo(c.created_at)}</td><td><code>${esc(c.click_id)}</code></td><td>${esc(c.campaign_name||c.campaign_id||'—')}</td><td>${esc(c.country||'—')}</td><td>${esc(c.device_type||'—')}</td><td>${esc(c.fbclid||'—')}</td></tr>`).join(''):'<tr><td colspan="6" class="tbl-empty">No clicks yet</td></tr>';}catch(e){}
+}
+function exportClicks(){window.open(API+'/api/export/clicks.csv','_blank');}
+async function loadDomains(){
+  try{const ds=await api('/tracking-domains');document.getElementById('domains-tbody').innerHTML=ds.length?ds.map(d=>`<tr><td>${esc(d.domain)}</td><td>${d.is_active?'✅':''}</td><td>${timeAgo(d.created_at)}</td><td><button class="btn btn-ghost btn-xs" onclick="deleteDomain(${d.id})">🗑</button></td></tr>`).join(''):'<tr><td colspan="4" class="tbl-empty">No domains yet</td></tr>';}catch(e){}
+}
+async function createDomain(){const d=v('dm-domain');if(!d){showErr('dm-err','Domain required');return;}await btnLoad('dm-btn',async()=>{await api('/tracking-domains','POST',{domain:d});closeModal('modal-domain');loadDomains();},'dm-err');}
+async function deleteDomain(id){if(!confirm('Delete?'))return;await api('/tracking-domains/'+id,'DELETE');loadDomains();}
+async function loadContacts(){
+  try{const q=v('contacts-search');const qs=q?'?search='+encodeURIComponent(q):'';const cs=await api('/identities'+qs);document.getElementById('contacts-tbody').innerHTML=cs.length?cs.map(c=>`<tr><td>${esc(c.first_name||'—')} ${esc(c.last_name||'')}</td><td>${esc(c.username||'—')}</td><td>${timeAgo(c.first_seen)}</td><td>${timeAgo(c.last_seen)}</td><td>${esc(c.source||'—')}</td><td><button class="btn btn-ghost btn-xs" onclick="showJourney(${c.id})">Journey</button></td></tr>`).join(''):'<tr><td colspan="6" class="tbl-empty">No contacts yet</td></tr>';}catch(e){}
+}
+function showJourney(id){switchTab('journeys');document.getElementById('journey-identity').value=id;loadJourney();}
+async function loadJourney(){
+  const id=v('journey-identity');if(!id){showErr('journey-body','Enter identity ID');return;}
+  try{const j=await api('/identities/'+id+'/journey');const body=document.getElementById('journey-body');if(!j.journey.length){body.innerHTML='<div class="tbl-empty">No journey yet</div>';return;}body.innerHTML=j.journey.map(e=>`<div style="display:flex;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border)"><div style="font-size:11px;color:var(--text3);min-width:140px">${esc(e.ts)}</div><div><div style="font-weight:600;font-size:12px">${esc(e.type)}</div><div style="font-size:11px;color:var(--text2)">${esc(JSON.stringify(e).slice(0,120))}</div></div></div>`).join('');}catch(e){document.getElementById('journey-body').innerHTML='<div class="tbl-empty">Error: '+esc(e.message)+'</div>';}
+}
+async function loadTags(){
+  try{const tags=await api('/tags');document.getElementById('tags-tbody').innerHTML=tags.length?tags.map(t=>`<tr><td>${esc(t.name)}</td><td><span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${esc(t.color||'#4f8ef7')}"></span> ${esc(t.color||'—')}</td><td>${timeAgo(t.created_at)}</td><td><button class="btn btn-ghost btn-xs" onclick="deleteTag(${t.id})">🗑</button></td></tr>`).join(''):'<tr><td colspan="4" class="tbl-empty">No tags yet</td></tr>';}catch(e){}
+}
+async function createTag(){const n=v('tag-name');if(!n){showErr('tag-err','Name required');return;}await btnLoad('tag-btn',async()=>{await api('/tags','POST',{name:n});closeModal('modal-tag');loadTags();},'tag-err');}
+async function deleteTag(id){if(!confirm('Delete tag?'))return;await api('/tags/'+id,'DELETE');loadTags();}
+async function loadEvents(){
+  try{const t=v('events-filter-type');const qs=t?'?event_type='+encodeURIComponent(t):'';const es=await api('/events'+qs);document.getElementById('events-tbody').innerHTML=es.length?es.map(e=>`<tr><td>${timeAgo(e.created_at)}</td><td><span class="badge badge-blue">${esc(e.event_type)}</span></td><td>${e.telegram_user_id||'—'}</td><td>${e.campaign_id||'—'}</td><td>${e.click_id||'—'}</td></tr>`).join(''):'<tr><td colspan="5" class="tbl-empty">No events yet</td></tr>';}catch(e){}
+}
+async function loadAnalytics(){
+  try{const d=await api('/analytics/overview');document.getElementById('a-clicks').textContent=d.clicks;document.getElementById('a-users').textContent=d.users;document.getElementById('a-convs').textContent=d.conversions;document.getElementById('a-metasent').textContent=d.meta_sent;const s=document.getElementById('analytics-series');if(d.series.length){s.innerHTML=d.series.map(x=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${esc(x.date)}</span><span style="font-weight:600">${x.clicks} clicks</span></div>`).join('');}else{s.innerHTML='<div class="tbl-empty">No data</div>';}const by=document.getElementById('analytics-by').value;const bd=await api('/analytics/breakdown?by='+by);document.getElementById('analytics-breakdown').innerHTML=bd.length?bd.map(x=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${esc(x.value||'Unknown')}</span><span>${x.count}</span></div>`).join(''):'<div class="tbl-empty">No breakdown</div>';}catch(e){}
+}
+async function loadPixels(){
+  try{const ps=await api('/meta-pixels');document.getElementById('pixels-tbody').innerHTML=ps.length?ps.map(p=>`<tr><td><code>${esc(p.pixel_id)}</code></td><td>${p.is_active?'✅':''}</td><td>${p.has_token?'🔒':''}</td><td>${esc(p.test_event_code||'—')}</td><td><button class="btn btn-ghost btn-xs" onclick="deletePixel(${p.id})">🗑</button></td></tr>`).join(''):'<tr><td colspan="5" class="tbl-empty">No pixels yet — add one to enable CAPI</td></tr>';}catch(e){}
+}
+async function createPixel(){const body={pixel_id:v('px-id'),access_token:v('px-token'),test_event_code:v('px-test')};if(!body.pixel_id){showErr('px-err','Pixel ID required');return;}await btnLoad('px-btn',async()=>{await api('/meta-pixels','POST',body);closeModal('modal-pixel');loadPixels();},'px-err');}
+async function deletePixel(id){if(!confirm('Delete pixel?'))return;await api('/meta-pixels/'+id,'DELETE');loadPixels();}
+async function loadCapiEvents(){
+  try{const s=v('capi-filter-status');const qs=s?'?status='+encodeURIComponent(s):'';const es=await api('/meta-events'+qs);document.getElementById('capievents-tbody').innerHTML=es.length?es.map(e=>`<tr><td>${timeAgo(e.created_at)}</td><td>${esc(e.event_name)}</td><td><code>${esc(e.pixel_id)}</code></td><td><span class="badge ${e.status==='SENT'?'badge-green':e.status==='FAILED'||e.status==='DEAD_LETTER'?'badge-red':'badge-blue'}">${esc(e.status)}</span></td><td>${e.attempt_count}</td><td>${e.status==='FAILED'||e.status==='DEAD_LETTER'?`<button class="btn btn-ghost btn-xs" onclick="retryCapi(${e.id})">↺ Retry</button>`:''}</td></tr>`).join(''):'<tr><td colspan="6" class="tbl-empty">No CAPI events yet</td></tr>';}catch(e){}
+}
+async function retryCapi(id){await api('/meta-events/'+id+'/retry','POST');loadCapiEvents();}
+async function sendTestEvent(){await api('/meta-events/test','POST',{event_name:'Lead'});loadCapiEvents();showToast('Test event queued','Check CAPI Events tab','✅');}
+async function loadFlows(){
+  try{const fs=await api('/flows');document.getElementById('flows-tbody').innerHTML=fs.length?fs.map(f=>`<tr><td>${esc(f.name)}</td><td>${esc(f.trigger_type||'—')}</td><td>${f.is_active?'✅':''}</td><td>${f.campaign_id||'—'}</td><td><button class="btn btn-ghost btn-xs" onclick="deleteFlow(${f.id})">🗑</button></td></tr>`).join(''):'<tr><td colspan="5" class="tbl-empty">No flows yet</td></tr>';}catch(e){}
+}
+async function createFlow(){const body={name:v('flow-name'),trigger_type:v('flow-trigger')};if(!body.name){showErr('flow-err','Name required');return;}await btnLoad('flow-btn',async()=>{await api('/flows','POST',body);closeModal('modal-flow');loadFlows();},'flow-err');}
+async function deleteFlow(id){if(!confirm('Delete flow?'))return;await api('/flows/'+id,'DELETE');loadFlows();}
+async function loadAttribution(){
+  try{const a=await api('/settings/attribution');document.getElementById('set-att-model').value=a.model;document.getElementById('set-att-window').value=a.window_hours;document.getElementById('set-att-organic').checked=a.include_organic;}catch(e){}
+}
+async function saveAttribution(){const body={model:document.getElementById('set-att-model').value,window_hours:parseInt(document.getElementById('set-att-window').value)||168,include_organic:document.getElementById('set-att-organic').checked};await api('/settings/attribution','PUT',body);showToast('Saved','Attribution settings updated','✅');}
+async function loadApiKeys(){
+  try{const ks=await api('/api-keys');document.getElementById('apikeys-body').innerHTML=ks.length?ks.map(k=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div><div style="font-family:var(--mono);font-size:12px">${esc(k.prefix)}…</div><div style="font-size:11px;color:var(--text2)">${esc(k.label||'—')} · ${timeAgo(k.created_at)}</div></div><button class="btn btn-ghost btn-xs" onclick="deleteApiKey(${k.id})">🗑</button></div>`).join(''):'<div class="tbl-empty">No API keys</div>';}catch(e){}
+}
+async function createApiKey(){const label=prompt('Label for new API key:');if(label===null)return;const r=await api('/api-keys','POST',{label});if(r.key){alert('API Key (copy now, shown only once):\n\n'+r.key);loadApiKeys();}}
+async function deleteApiKey(id){if(!confirm('Delete API key?'))return;await api('/api-keys/'+id,'DELETE');loadApiKeys();}
+async function loadHealth(){
+  try{const h=await api('/health/detailed');document.getElementById('health-body').innerHTML=`<pre style="font-family:var(--mono);font-size:11px;white-space:pre-wrap;background:var(--bg3);padding:12px;border-radius:8px;overflow:auto">${esc(JSON.stringify(h,null,2))}</pre>`;}catch(e){document.getElementById('health-body').innerHTML='<div class="tbl-empty">Error: '+esc(e.message)+'</div>';}
+}
+
 function copyText(text,btn){
+
   navigator.clipboard.writeText(text).then(()=>{
     const orig=btn.textContent;btn.textContent='✓';btn.classList.add('copied');
     setTimeout(()=>{btn.textContent=orig;btn.classList.remove('copied');},1600);

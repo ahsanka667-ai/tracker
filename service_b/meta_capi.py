@@ -14,7 +14,11 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-META_CAPI_ENDPOINT = "https://graph.facebook.com/v19.0/{pixel_id}/events"
+from shared.config import get_settings as _get_settings
+def _capi_endpoint(pixel_id: str) -> str:
+    ver = _get_settings().META_GRAPH_VERSION
+    return f"https://graph.facebook.com/{ver}/{pixel_id}/events"
+META_CAPI_ENDPOINT = "https://graph.facebook.com/v21.0/{pixel_id}/events"
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 1.5
 
@@ -42,6 +46,7 @@ def build_user_data(
     client_ip:    str | None = None,
     user_agent:   str | None = None,
     fbclid:       str | None = None,
+    fbc:          str | None = None,
     fbp:          str | None = None,   # browser pixel cookie (_fbp)
 ) -> dict[str, Any]:
     """
@@ -77,12 +82,14 @@ def build_user_data(
     if user_agent:
         ud["client_user_agent"] = user_agent
 
-    # Facebook Click ID — if present, enables browser-level attribution
-    if fbclid:
-        # Meta's fbc format: fb.{version}.{creation_time}.{fbclid}
+    # fbc/fbp — must reuse stored values verbatim, never regenerate
+    if fbc:
+        ud["fbc"] = fbc
+    elif fbclid:
+        # Fallback only if caller passed fbclid without stored fbc (legacy)
+        # Still build but caller should prefer stored fbc
         ud["fbc"] = f"fb.1.{int(time.time() * 1000)}.{fbclid}"
 
-    # Facebook browser pixel cookie — if passed through from landing page
     if fbp:
         ud["fbp"] = fbp
 
@@ -158,7 +165,7 @@ async def fire_event(
     if test_event_code:
         body["test_event_code"] = test_event_code
 
-    url = META_CAPI_ENDPOINT.format(pixel_id=pixel_id)
+    url = _capi_endpoint(pixel_id)
     last_error: dict[str, Any] = {}
 
     for attempt in range(1, _MAX_RETRIES + 1):

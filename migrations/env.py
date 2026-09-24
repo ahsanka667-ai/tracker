@@ -10,7 +10,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 from shared.database import Base
-from shared.models import DashboardUser, TelegramAccount, Campaign  # noqa
+import shared.models  # noqa: F401 - import all models so autogenerate sees them
 target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:

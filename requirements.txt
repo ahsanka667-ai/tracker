@@ -6,9 +6,10 @@ uvicorn[standard]==0.29.0
 sqlalchemy[asyncio]==2.0.30
 asyncpg==0.29.0
 alembic==1.13.1
+aiosqlite==0.22.1
 
-# Redis — use redis>=4.2 NOT aioredis (broken on Python 3.12)
-redis[asyncio]==5.0.4
+# Redis
+redis==5.0.4
 
 # Telegram — Telethon (userbot/personal accounts)
 telethon==1.36.0
@@ -18,11 +19,23 @@ python-telegram-bot==21.3
 
 # HTTP client (Meta CAPI)
 aiohttp==3.9.5
+httpx==0.27.2
 
 # Config
 pydantic-settings==2.2.1
 python-dotenv==1.0.1
 
-# Speed boost for Telethon crypto
+# Security / crypto
+cryptography==45.0.3
+
+# Utilities
 cryptg==0.4.0
 aiofiles==23.2.1
+python-multipart==0.0.18
+user-agents==2.2.0
+
+# Testing
+pytest==8.3.5
+pytest-asyncio==0.23.8
+fakeredis==2.23.0
+httpx==0.27.2

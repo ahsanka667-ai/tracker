@@ -52,6 +52,24 @@ services:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
 
+  capi_worker:
+    build: .
+    restart: unless-stopped
+    command: python service_b/capi_worker.py
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  jobs_worker:
+    build: .
+    restart: unless-stopped
+    command: python service_b/jobs_worker.py
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
   master_bot:
     build: .
     restart: unless-stopped

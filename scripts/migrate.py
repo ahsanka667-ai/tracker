@@ -256,6 +256,58 @@ MIGRATIONS = [
         "check": "SELECT column_name FROM information_schema.columns WHERE table_name='conversion_triggers' AND column_name='match_mode'",
         "sql": "ALTER TABLE conversion_triggers ADD COLUMN match_mode VARCHAR(8) NOT NULL DEFAULT 'any'",
     },
+    # v7: new tables for v5 (clicks, identities, events, meta, etc.) — handled by init_db create_all,
+    # but add explicit column additions for existing tables that gained new fields
+    {
+        "id": "v7_01_user_sessions_fbc",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='user_sessions' AND column_name='fbc'",
+        "sql": "ALTER TABLE user_sessions ADD COLUMN fbc VARCHAR(512)",
+    },
+    {
+        "id": "v7_02_user_sessions_fbp",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='user_sessions' AND column_name='fbp'",
+        "sql": "ALTER TABLE user_sessions ADD COLUMN fbp VARCHAR(128)",
+    },
+    {
+        "id": "v7_03_user_sessions_click_id",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='user_sessions' AND column_name='click_id'",
+        "sql": "ALTER TABLE user_sessions ADD COLUMN click_id INTEGER REFERENCES clicks(id) ON DELETE SET NULL",
+    },
+    {
+        "id": "v7_04_conversion_logs_fbc",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='conversion_logs' AND column_name='fbc'",
+        "sql": "ALTER TABLE conversion_logs ADD COLUMN fbc VARCHAR(512)",
+    },
+    {
+        "id": "v7_05_conversion_logs_fbp",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='conversion_logs' AND column_name='fbp'",
+        "sql": "ALTER TABLE conversion_logs ADD COLUMN fbp VARCHAR(128)",
+    },
+    {
+        "id": "v7_06_conversion_logs_click_id",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='conversion_logs' AND column_name='click_id'",
+        "sql": "ALTER TABLE conversion_logs ADD COLUMN click_id INTEGER REFERENCES clicks(id) ON DELETE SET NULL",
+    },
+    {
+        "id": "v7_07_conversion_logs_identity_id",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='conversion_logs' AND column_name='identity_id'",
+        "sql": "ALTER TABLE conversion_logs ADD COLUMN identity_id INTEGER REFERENCES telegram_identities(id) ON DELETE SET NULL",
+    },
+    {
+        "id": "v7_08_telegram_accounts_welcome",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='telegram_accounts' AND column_name='welcome_message'",
+        "sql": "ALTER TABLE telegram_accounts ADD COLUMN welcome_message TEXT",
+    },
+    {
+        "id": "v7_09_messages_identity",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='messages' AND column_name='identity_id'",
+        "sql": "ALTER TABLE messages ADD COLUMN identity_id INTEGER REFERENCES telegram_identities(id) ON DELETE SET NULL",
+    },
+    {
+        "id": "v7_10_funnels_window",
+        "check": "SELECT column_name FROM information_schema.columns WHERE table_name='funnels' AND column_name='window_hours'",
+        "sql": "ALTER TABLE funnels ADD COLUMN window_hours INTEGER",
+    },
 ]
 
 

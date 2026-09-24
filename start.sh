@@ -12,12 +12,17 @@ if [ ! -f ".env" ]; then
   exit 1
 fi
 
-if [ ! -d "venv" ]; then
+# Support both venv and .venv
+if [ ! -d "venv" ] && [ ! -d ".venv" ]; then
   echo "⚙️  Creating virtual environment..."
-  python3.11 -m venv venv 2>/dev/null || python3 -m venv venv
+  python3.11 -m venv .venv 2>/dev/null || python3 -m venv .venv
 fi
 
-source venv/bin/activate
+if [ -d ".venv" ]; then
+  source .venv/bin/activate
+else
+  source venv/bin/activate
+fi
 
 if ! python -c "import fastapi" 2>/dev/null; then
   echo "📦 Installing dependencies..."
@@ -40,7 +45,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🚀 Starting all services..."
 echo ""
 
-# Read BASE_URL from .env
 BASE_URL=$(grep "^BASE_URL=" .env | cut -d'=' -f2-)
 echo "  Base URL:   $BASE_URL"
 echo "  API Docs:   $BASE_URL/internal/docs"
@@ -58,28 +62,26 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Service A — FastAPI (serves dashboard + API). Always starts — this is
-# the only service required for the dashboard + username/password login.
+# Service A — FastAPI (always)
 uvicorn service_a.main:app --host 0.0.0.0 --port 8000 --reload &
 sleep 3
 
-# Service B (Telethon worker) and the Master Bot both talk to Telegram
-# and are useless without MASTER_BOT_TOKEN / TELEGRAM_API_ID / TELEGRAM_API_HASH.
-# If you haven't set those up yet (e.g. you're just using ADMIN_USERNAME/
-# ADMIN_PASSWORD to log in and look around), skip them instead of dumping
-# a wall of config-error text — the dashboard runs fine without them.
+# CAPI + Jobs workers (always — they handle Meta queue & retention, no Telegram needed)
+python service_b/capi_worker.py &
+sleep 1
+python service_b/jobs_worker.py &
+sleep 1
+
 TOKEN_SET=$(grep -E "^MASTER_BOT_TOKEN=" .env | cut -d'=' -f2-)
 API_ID_SET=$(grep -E "^TELEGRAM_API_ID=" .env | cut -d'=' -f2-)
 
 if [ -n "$TOKEN_SET" ] && [ "$TOKEN_SET" != "0" ] && [ -n "$API_ID_SET" ] && [ "$API_ID_SET" != "0" ]; then
-  # Service B — Telethon worker (actual Telegram tracking)
   python service_b/worker.py &
   sleep 2
-  # Master Bot
   python master_bot/bot.py &
 else
   echo "  ⏭️  Skipping worker + master bot — no Telegram credentials in .env yet."
-  echo "     (Dashboard still works: log in with ADMIN_USERNAME/ADMIN_PASSWORD.)"
+  echo "     (Dashboard + CAPI worker still running: log in with ADMIN_USERNAME/ADMIN_PASSWORD.)"
   echo "     Add MASTER_BOT_TOKEN + TELEGRAM_API_ID + TELEGRAM_API_HASH to .env"
   echo "     and re-run this script when you're ready to add Telegram tracking."
   echo ""

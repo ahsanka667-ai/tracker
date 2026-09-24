@@ -22,7 +22,7 @@ Session-based attribution:
 
 Account types supported: BOT, PERSONAL, CHANNEL (monitors member joins)
 """
-import asyncio, json, logging, os, re, sys
+import asyncio, json, logging, os, re, sqlite3, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from datetime import datetime, timezone
 from pathlib import Path
@@ -156,8 +156,11 @@ async def get_or_create_session(campaign_id: int, tg_user_id: int,
             tg_phone=getattr(sender, "phone", None) if sender else None,
             session_key=payload.get("session_key", ""),
             fbclid=payload.get("fbclid", ""),
+            fbc=payload.get("fbc"),
+            fbp=payload.get("fbp"),
             client_ip=payload.get("client_ip", ""),
             user_agent=payload.get("user_agent", ""),
+            click_id=payload.get("click_id"),
             fired_triggers="",
         )
         db.add(new_session)
@@ -219,53 +222,96 @@ async def fire_trigger(
     skip_if_fired: bool = True,
 ):
     """
-    Fire a single ConversionTrigger's CAPI event and log it.
-    skip_if_fired=True prevents the same trigger type firing twice
-    per user per campaign (e.g. first_message only fires once).
+    Enqueue a Meta CAPI event instead of firing inline.
+    This keeps Telegram handlers responsive even if Meta is slow.
     """
     if skip_if_fired and trigger_already_fired(session, trigger.id):
         logger.debug("Trigger id=%d (%s) already fired for user %d campaign %d — skipping",
                      trigger.id, trigger.trigger_type, tg_user_id, trigger.campaign_id)
         return
 
-    # Build user_data from session
-    ud = build_user_data(
+    # Resolve identity + attribution for proper linking
+    from shared.models import MetaEvent, MetaEventStatus
+    from shared.meta import build_user_data as _build_ud, build_custom_data as _build_cd, new_event_id, dedup_key
+    from shared.security import decrypt_secret
+    import json as _json
+
+    # Use stored fbc/fbp verbatim from session (click-time values)
+    fbc = getattr(session, "fbc", None) or None
+    fbp = getattr(session, "fbp", None) or None
+    # Fallback to Click's fbc/fbp if session doesn't have it (migration)
+    if not fbc and getattr(session, "click_id", None):
+        try:
+            from shared.models import Click as _Click
+            async with AsyncSessionLocal() as db:
+                cl = await db.get(_Click, session.click_id)
+                if cl:
+                    fbc = cl.fbc or fbc
+                    fbp = cl.fbp or fbp
+        except Exception:
+            pass
+
+    ud = _build_ud(
         telegram_id=tg_user_id,
         first_name=session.tg_first_name,
         phone=session.tg_phone,
         username=session.tg_username,
         client_ip=session.client_ip,
         user_agent=session.user_agent,
-        fbclid=session.fbclid,
+        fbc=fbc,
+        fbp=fbp,
     )
 
-    # custom_data from trigger config
     content_ids = [x.strip() for x in trigger.content_ids.split(",")] if trigger.content_ids else None
-    extra = json.loads(trigger.custom_data_json) if trigger.custom_data_json else None
+    extra = _json.loads(trigger.custom_data_json) if trigger.custom_data_json else None
+    cd = _build_cd(value=trigger.value, currency=trigger.currency, content_name=trigger.content_name, content_ids=content_ids, extra=extra)
 
+    # Find pixel id: account's pixel or MetaPixel table
     pixel_id = account.meta_pixel_id or ""
-    capi_token = account.meta_capi_token or ""
+    if not pixel_id:
+        try:
+            from shared.models import MetaPixel
+            async with AsyncSessionLocal() as db:
+                r = await db.execute(select(MetaPixel).where(MetaPixel.user_id == account.user_id, MetaPixel.is_active == True).limit(1))
+                mp = r.scalar_one_or_none()
+                if mp:
+                    pixel_id = mp.pixel_id
+        except Exception:
+            pass
+    if not pixel_id:
+        logger.warning("No pixel for campaign %d — skipping CAPI", trigger.campaign_id)
+        pixel_id = "unknown"
 
-    result = await fire_event(
-        pixel_id=pixel_id,
-        capi_token=capi_token,
-        event_name=trigger.event_name,
-        user_data=ud,
-        value=trigger.value,
-        currency=trigger.currency,
-        content_name=trigger.content_name,
-        content_ids=content_ids,
-        extra_custom_data=extra,
-    )
+    event_id = new_event_id()
+    dedup = dedup_key(trigger.event_name, event_id, pixel_id)
 
-    status = "error" if result.get("error") else "fired"
+    # Create conversion log + telegram event + meta event atomically
     camp_owner_id = 0
-
+    meta_id = None
+    conv_id = None
     async with AsyncSessionLocal() as db:
         camp = campaign or await db.get(Campaign, trigger.campaign_id)
         if camp:
             camp_owner_id = camp.user_id
-        db.add(ConversionLog(
+        # Find identity for linking
+        identity_id = None
+        try:
+            from shared.models import TelegramIdentity
+            r = await db.execute(select(TelegramIdentity).where(TelegramIdentity.owner_user_id == camp_owner_id, TelegramIdentity.telegram_user_id == tg_user_id).limit(1))
+            ident = r.scalar_one_or_none()
+            if ident:
+                identity_id = ident.id
+        except Exception:
+            pass
+
+        # Idempotency: if dedup already exists, skip
+        existing = await db.execute(select(MetaEvent).where(MetaEvent.dedup_key == dedup))
+        if existing.scalar_one_or_none():
+            logger.info("Meta dedup skip [event=%s id=%s]", trigger.event_name, event_id)
+            return
+
+        # Create conversion log (status QUEUED until CAPI confirms)
+        clog = ConversionLog(
             campaign_id=trigger.campaign_id,
             account_id=account.id,
             trigger_id=trigger.id,
@@ -273,39 +319,127 @@ async def fire_trigger(
             telegram_user_id=tg_user_id,
             telegram_username=session.tg_username,
             fbclid=session.fbclid,
+            fbc=fbc,
+            fbp=fbp,
             client_ip=session.client_ip,
             user_agent=session.user_agent,
             event_type=trigger.event_name,
             event_value=trigger.value,
             event_currency=trigger.currency,
             content_name=trigger.content_name,
-            status=ConversionStatus(status),
-            error_detail=str(result.get("error")) if result.get("error") else None,
-            meta_event_id=result.get("event_id"),
-            fbtrace_id=result.get("fbtrace_id"),
+            status=ConversionStatus.fired,
+            meta_event_id=event_id,
             fired_at=datetime.now(timezone.utc),
-        ))
-        if status == "fired" and camp:
-            await db.execute(
-                update(Campaign).where(Campaign.id == trigger.campaign_id)
-                .values(total_conversions=Campaign.total_conversions + 1)
+            click_id=getattr(session, "click_id", None),
+            identity_id=identity_id,
+        )
+        db.add(clog)
+        await db.flush()
+        conv_id = clog.id
+        if camp:
+            await db.execute(update(Campaign).where(Campaign.id == trigger.campaign_id).values(total_conversions=Campaign.total_conversions + 1))
+
+        # Create meta_events row
+        test_code = None
+        try:
+            from shared.models import MetaPixel
+            r = await db.execute(select(MetaPixel).where(MetaPixel.pixel_id == pixel_id).limit(1))
+            mp = r.scalar_one_or_none()
+            if mp:
+                test_code = mp.test_event_code
+        except Exception:
+            pass
+
+        # also create TelegramEvent
+        from shared.models import TelegramEvent, TelegramEventType
+        try:
+            # map trigger type to event type
+            etype = TelegramEventType.CUSTOM_EVENT
+            try:
+                etype = TelegramEventType(trigger.trigger_type.value.upper())
+            except Exception:
+                etype = TelegramEventType.CUSTOM_EVENT
+            # normalize
+            if trigger.trigger_type == TriggerType.bot_start:
+                etype = TelegramEventType.BOT_START
+            elif trigger.trigger_type == TriggerType.channel_join:
+                etype = TelegramEventType.CHANNEL_JOIN
+            elif trigger.trigger_type == TriggerType.keyword:
+                etype = TelegramEventType.KEYWORD_MATCH
+
+            te = TelegramEvent(
+                event_id=event_id,
+                event_type=etype,
+                owner_user_id=camp_owner_id,
+                telegram_user_id=tg_user_id,
+                identity_id=identity_id,
+                click_id=getattr(session, "click_id", None),
+                campaign_id=trigger.campaign_id,
+                account_id=account.id,
+                trigger_id=trigger.id,
+                fbclid=session.fbclid,
+                fbc=fbc,
+                fbp=fbp,
+                meta_event_id=event_id,
+                event_metadata=_json.dumps({"trigger_type": trigger.trigger_type.value, "event_name": trigger.event_name}),
+                created_at=datetime.now(timezone.utc),
             )
+            db.add(te)
+            await db.flush()
+            te_id = te.id
+        except Exception as e:
+            logger.warning("Failed to create TelegramEvent: %s", e)
+            te_id = None
+
+        me = MetaEvent(
+            event_id=event_id,
+            event_name=trigger.event_name,
+            owner_user_id=camp_owner_id,
+            pixel_id=pixel_id,
+            campaign_id=trigger.campaign_id,
+            click_id=getattr(session, "click_id", None),
+            identity_id=identity_id,
+            telegram_user_id=tg_user_id,
+            telegram_event_id=te_id,
+            conversion_log_id=conv_id,
+            fbc=fbc,
+            fbp=fbp,
+            event_time=int(datetime.now(timezone.utc).timestamp()),
+            event_source_url="https://t.me",
+            custom_data=_json.dumps(cd) if cd else None,
+            user_data=_json.dumps(ud),
+            status=MetaEventStatus.QUEUED,
+            test_event_code=test_code,
+            dedup_key=dedup,
+        )
+        db.add(me)
+        await db.flush()
+        meta_id = me.id
+        # link back
+        clog.meta_event_row_id = meta_id
+        if te_id:
+            te.meta_event_id = event_id
         await db.commit()
 
-    if status == "fired":
-        await mark_trigger_fired(session, trigger.id)
-        uname = session.tg_username or str(tg_user_id)
-        await notify(
-            camp_owner_id,
-            "conversion",
-            f"✅ {trigger.event_name}",
-            f"@{uname} — {trigger.trigger_type.value}",
-            {"campaign_id": trigger.campaign_id, "event_type": trigger.event_name,
-             "trigger_type": trigger.trigger_type.value, "telegram_user_id": tg_user_id}
-        )
+    # Mark fired + enqueue
+    await mark_trigger_fired(session, trigger.id)
+    try:
+        from shared.queue import enqueue
+        await enqueue(settings.QUEUE_META_CAPI, {"meta_event_id": meta_id, "event_id": event_id})
+        log_event(logger, "META_EVENT_QUEUED", meta_event_id=meta_id, event_name=trigger.event_name, dedup=dedup)
+    except Exception as e:
+        logger.warning("Failed to enqueue CAPI job: %s", e)
 
-    logger.info("Trigger fired [type=%s event=%s user=%d status=%s]",
-                trigger.trigger_type, trigger.event_name, tg_user_id, status)
+    uname = session.tg_username or str(tg_user_id)
+    # Don't wait for Meta — notify immediately that event is queued
+    await notify(
+        camp_owner_id,
+        "conversion",
+        f"✅ {trigger.event_name}",
+        f"@{uname} — {trigger.trigger_type.value} (queued)",
+        {"campaign_id": trigger.campaign_id, "event_type": trigger.event_name, "trigger_type": trigger.trigger_type.value, "telegram_user_id": tg_user_id}
+    )
+    logger.info("Trigger queued [type=%s event=%s user=%d meta_id=%s]", trigger.trigger_type, trigger.event_name, tg_user_id, meta_id)
 
 
 # ── Campaign lookup by account ────────────────────────────────────────
@@ -417,9 +551,33 @@ def _register_handlers(client: TelegramClient, account: TelegramAccount):
             if not short_key:
                 return
 
-            payload = await consume_click_payload(short_key)
-            if not payload or str(payload.get("account_id")) != str(account.id):
+            # short_key may be a signed correlation token
+            token_to_consume = short_key
+            click_public_id = short_key
+            try:
+                from shared.security import verify_token, TokenError
+                from shared.config import get_settings as _gs
+                data = verify_token(short_key, _gs().SECRET_KEY, purpose="click")
+                click_public_id = data.get("cid") or short_key
+                token_to_consume = click_public_id
+            except Exception:
+                pass
+
+            payload = await consume_click_payload(token_to_consume)
+            # Account check: campaign's account must match, but also allow if payload has no account_id (new clicks)
+            if not payload:
                 return
+            # strict check only if payload has account_id
+            if payload.get("account_id") and str(payload.get("account_id")) != str(account.id):
+                # check if campaign belongs to same owner even if account differs (tracking_link vs campaign)
+                try:
+                    from shared.models import Campaign as _Camp
+                    async with AsyncSessionLocal() as db:
+                        camp = await db.get(_Camp, payload.get("campaign_id"))
+                        if not camp or camp.user_id != account.user_id:
+                            return
+                except Exception:
+                    return
 
             payload["session_key"] = short_key
             campaign_id = payload["campaign_id"]
@@ -470,7 +628,10 @@ def _register_handlers(client: TelegramClient, account: TelegramAccount):
                                              .values(total_conversions=Campaign.total_conversions+1))
                         await db.commit()
                     if status == "fired":
-                        await mark_trigger_fired(session, "bot_start")
+                        # dedup via trigger id — fallback path had a string bug, now use first trigger id or skip
+                        fallback_id = triggers[0].id if triggers else 0
+                        if fallback_id:
+                            await mark_trigger_fired(session, fallback_id)
                         await notify(payload.get("user_id",0), "conversion",
                                      f"✅ {camp.event_type}",
                                      f"@{getattr(sender,'username','') or sender.id} via /start",
@@ -721,10 +882,33 @@ async def _register_channel_handlers(client: TelegramClient, channel_accounts: l
 
             campaigns = await get_active_campaigns(ch_account.id)
             for camp in campaigns:
-                # Organic join — same "any real interaction counts" rule as
-                # DMs/bot-start; most channel joins won't carry a tracked
-                # click key, so create a session from scratch if needed.
-                session = await get_or_create_session(camp.id, user_id, {"session_key": "organic"}, None)
+                # Try to recover attribution via central engine first (bot→channel journey)
+                session = None
+                try:
+                    # check existing session
+                    async with AsyncSessionLocal() as db:
+                        r = await db.execute(select(UserSession).where(and_(UserSession.tg_user_id == user_id, UserSession.campaign_id == camp.id)))
+                        session = r.scalar_one_or_none()
+                    if not session:
+                        # try attribution engine: any prior click for this identity?
+                        from shared.attribution import resolve_attribution
+                        attr = await resolve_attribution(ch_account.user_id, user_id)
+                        if attr and attr.get("campaign_id") == camp.id:
+                            click = attr["click"]
+                            session = await get_or_create_session(camp.id, user_id, {"session_key": click.click_id, "fbclid": click.fbclid, "fbc": click.fbc, "fbp": click.fbp, "client_ip": click.ip, "user_agent": click.user_agent, "campaign_id": click.campaign_id}, None)
+                            if session and not session.fbc and click.fbc:
+                                session.fbc = click.fbc
+                            if session and not session.fbp and click.fbp:
+                                session.fbp = click.fbp
+                        else:
+                            # also try any click for this user (cross-campaign recovery)
+                            if attr:
+                                click = attr["click"]
+                                session = await get_or_create_session(camp.id, user_id, {"session_key": click.click_id, "fbclid": click.fbclid, "fbc": click.fbc, "fbp": click.fbp, "client_ip": click.ip, "user_agent": click.user_agent}, None)
+                except Exception as e:
+                    logger.debug("attribution recovery failed: %s", e)
+                if not session:
+                    session = await get_or_create_session(camp.id, user_id, {"session_key": "organic"}, None)
                 if not session:
                     continue
                 await _fire_default_or_triggers(ch_account, camp.id, TriggerType.channel_join, session, user_id)
@@ -759,7 +943,17 @@ async def _register_channel_handlers(client: TelegramClient, channel_accounts: l
                     ))
                     session = r.scalar_one_or_none()
                 if not session:
-                    session = await get_or_create_session(camp.id, tg_user_id, {"session_key": "organic"}, sender)
+                    # try attribution recovery for channel messages too
+                    try:
+                        from shared.attribution import resolve_attribution as _ra
+                        _attr = await _ra(ch_account.user_id, tg_user_id)
+                        if _attr:
+                            _cl = _attr["click"]
+                            session = await get_or_create_session(camp.id, tg_user_id, {"session_key": _cl.click_id, "fbclid": _cl.fbclid, "fbc": _cl.fbc, "fbp": _cl.fbp, "client_ip": _cl.ip, "user_agent": _cl.user_agent}, sender)
+                    except Exception:
+                        pass
+                    if not session:
+                        session = await get_or_create_session(camp.id, tg_user_id, {"session_key": "organic"}, sender)
                     if not session:
                         continue
 
@@ -873,6 +1067,48 @@ async def boot_account(account: TelegramAccount):
                 logger.exception("Account %d boot failed (attempt %d): %s", account.id, attempt+1, e)
                 await asyncio.sleep(5)
 
+
+
+async def channel_reload_listener():
+    """Listens for tg:reload_channels pub/sub to hot-reload channel wiring without restart."""
+    try:
+        import redis.asyncio as aioredis
+        from shared.config import get_settings as _gs2
+        r = aioredis.from_url(_gs2().REDIS_URL, encoding="utf-8", decode_responses=True)
+        pubsub = r.pubsub()
+        await pubsub.subscribe("tg:reload_channels")
+        logger.info("Channel reload listener subscribed")
+        async for msg in pubsub.listen():
+            if msg.get("type") != "message":
+                continue
+            try:
+                data = json.loads(msg.get("data") or "{}")
+                logger.info("Reload channels signal received: %s", data)
+                # re-wire all active PERSONAL/BOT clients
+                for acct_id, client in list(active_clients.items()):
+                    if not client:
+                        continue
+                    try:
+                        from shared.models import TelegramAccount as _TA, AccountType as _AT
+                        async with AsyncSessionLocal() as db:
+                            from sqlalchemy import select as _select
+                            res = await db.execute(_select(_TA).where(_TA.id == acct_id))
+                            acct = res.scalar_one_or_none()
+                            if not acct:
+                                continue
+                        linked = await get_channel_accounts_for_monitor(acct_id)
+                        if linked:
+                            await _register_channel_handlers(client, linked)
+                            logger.info("Hot-reloaded %d channel handlers for monitor %d", len(linked), acct_id)
+                    except Exception as e:
+                        logger.warning("Hot reload failed for %d: %s", acct_id, e)
+            except Exception as e:
+                logger.warning("Reload listener error: %s", e)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning("Channel reload listener died: %s", e)
+        await asyncio.sleep(5)
 
 async def boot_all_accounts():
     async with AsyncSessionLocal() as db:
@@ -1040,6 +1276,7 @@ async def main():
 
     signin_task    = asyncio.create_task(process_signin_queue())
     heartbeat_task = asyncio.create_task(heartbeat_loop())
+    reload_task    = asyncio.create_task(channel_reload_listener())
 
     stop_event = asyncio.Event()
     def _shutdown():
@@ -1063,7 +1300,7 @@ async def main():
     except KeyboardInterrupt:
         pass
     finally:
-        signin_task.cancel(); heartbeat_task.cancel()
+        signin_task.cancel(); heartbeat_task.cancel(); reload_task.cancel()
         for c in active_clients.values():
             if c:
                 try: await c.disconnect()
